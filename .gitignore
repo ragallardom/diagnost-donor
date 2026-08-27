@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.class
+*.so
+.env
+venv/
+env/
+
+# ISOs y Binarios Pesados
+*.iso
+ISOs/*.iso
+Aplicaciones/*.deb
+
+# Logs y Caché
+builder/build_output.log
+builder/cache/
+builder/chroot/
+builder/binary/
+builder/.build/
+*.log
+
+# Perfiles temporales
+ChromeProfile/
+DiagnostKioskProfile/
+*Profile/
+
+# Sistema operativo
+.DS_Store
+Thumbs.db

@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DIAGNOSTDONOR - Hardware QA Suite</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700;800&display=swap"
+    rel="stylesheet">
+  <script src="vendor/jsQR.min.js"></script>
+</head>
+
+<body class="stealth-purple-theme">
+
+  <!-- Top Sticky Header Bar -->
+  <header class="app-header">
+    <div class="logo-container">
+      <div class="status-dot online"></div>
+      <h1>DIAGNOST-DONOR</h1>
+      <span
+        style="font-size: 0.75rem; color: #ffffff; font-weight: 500; font-family: var(--font-mono); margin-left: 2px;">v1.1.6</span>
+      <span class="badge-purple" id="header-serial">S/N: Detectando...</span>
+    </div>
+    <div class="system-quick-stats">
+      <div class="stat-pill"><span class="label">Modelo:</span> <strong id="quick-model">--</strong></div>
+      <div class="stat-pill"><span class="label">CPU:</span> <span id="quick-cpu">--</span></div>
+      <div class="stat-pill"><span class="label">RAM:</span> <span id="quick-ram">-- GB</span></div>
+      <div class="stat-pill"><span class="label">Batería:</span> <span id="quick-bat">--%</span> (<span
+          id="quick-charge-status">--</span>)</div>
+      <button class="btn btn-stress" onclick="openStressModal()" title="Prueba de estrés y estabilidad">Prueba de
+        estrés</button>
+      <button class="btn btn-icon-refresh" onclick="refreshAllData()" title="Actualizar datos">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+        </svg>
+      </button>
+      <button class="btn btn-power-reboot" onclick="confirmPower('reboot')"
+        title="Reiniciar el equipo">Reiniciar</button>
+      <button class="btn btn-power-off" onclick="confirmPower('shutdown')" title="Apagar el equipo">Apagar</button>
+    </div>
+  </header>
+
+  <!-- Sticky Checklist QA Bar -->
+  <div class="checklist-sticky-bar">
+    <span class="chk-label">Checklist QA:</span>
+    <div class="chk-bar-grid">
+      <a href="#sec-system" class="chk-pill" id="chk-cpu">CPU</a>
+      <a href="#sec-system" class="chk-pill" id="chk-screen">Pantalla</a>
+      <a href="#sec-system" class="chk-pill" id="chk-ram">RAM</a>
+      <a href="#sec-system" class="chk-pill" id="chk-ssd">SSD</a>
+      <a href="#sec-system" class="chk-pill" id="chk-hdmi">HDMI</a>
+      <a href="#sec-system" class="chk-pill" id="chk-bt">Bluetooth</a>
+      <a href="#sec-keyboard" class="chk-pill" id="chk-keyboard">Teclado (0/78)</a>
+      <a href="#sec-touchpad" class="chk-pill" id="chk-touchpad">Touchpad</a>
+      <a href="#sec-av" class="chk-pill" id="chk-camera">Cámara</a>
+      <a href="#sec-av" class="chk-pill" id="chk-audio">Parlantes</a>
+      <a href="#sec-av" class="chk-pill" id="chk-mic">Micrófono</a>
+      <a href="#sec-wifi" class="chk-pill" id="chk-wifi">Wi-Fi</a>
+    </div>
+  </div>
+
+  <!-- Single Page Container -->
+  <div class="single-page-container">
+
+    <!-- SECTION 1: HARDWARE RESUMEN CON CPU Y RAM APILADOS & BATERIA EN COLUMNA VERTICAL -->
+    <section id="sec-system" class="qa-section">
+      <div class="section-title">
+        <h2>Resumen de hardware del equipo</h2>
+      </div>
+
+      <!-- FILA 1: COMPONENTES PRINCIPALES (4 TARJETAS) -->
+      <div class="hardware-cards-layout">
+
+        <!-- CARD 1: IDENTIFICACIÓN -->
+        <div class="card">
+          <div class="card-spec-item">
+            <span class="spec-label">Modelo del laptop</span>
+            <div class="spec-value" id="sys-model">Detectando modelo...</div>
+          </div>
+          <div class="card-spec-item">
+            <span class="spec-label">Número de serie (S/N)</span>
+            <div class="spec-value-huge" id="sys-serial">--</div>
+          </div>
+          <div class="card-spec-item">
+            <span class="spec-label">Fabricante</span>
+            <div class="spec-value" id="sys-vendor">--</div>
+          </div>
+          <div class="card-spec-item"
+            style="margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid rgba(255, 255, 255, 0.08);">
+            <div style="display: flex; gap: 0.5rem;">
+              <button class="btn btn-secondary btn-sm" id="btn-screen-test" onclick="openScreenTestModal()"
+                style="flex: 1; white-space: nowrap;"
+                title="Prueba de píxeles quemados y uniformidad de pantalla">Prueba de pantalla</button>
+              <button class="btn btn-secondary btn-sm" id="btn-run-cputest" onclick="runCpuQuickTest()"
+                style="flex: 1; white-space: nowrap;" title="Test rápido de estabilidad y velocidad de CPU">Test de
+                CPU</button>
+            </div>
+            <div
+              style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.4rem; font-size: 0.73rem; font-family: var(--font-mono);">
+              <span id="screen-test-status" style="color: var(--text-muted);">Pantalla: Pendiente</span>
+              <span id="cpu-test-status" style="color: #a855f7;">Analizando CPU...</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- CARD 2: CPU (ARRIBA) Y RAM (ABAJO) -->
+        <div class="stacked-column">
+          <div class="card" style="padding: 1rem 1.25rem;">
+            <div class="card-spec-item">
+              <span class="spec-label">Procesador (CPU)</span>
+              <div class="spec-value" id="sys-cpu">Detectando CPU...</div>
+            </div>
+            <div class="card-spec-item">
+              <span class="spec-label">Arquitectura y núcleos</span>
+              <div class="spec-value spec-value-detail" id="sys-arch">--</div>
+            </div>
+          </div>
+
+          <div class="card" style="padding: 1rem 1.25rem;">
+            <div class="card-spec-item">
+              <span class="spec-label">Memoria RAM</span>
+              <div class="spec-value spec-value-accent" id="sys-ram">-- GB Instalados</div>
+            </div>
+            <div class="card-spec-item">
+              <span class="spec-label">Uso de memoria</span>
+              <div class="spec-value spec-value-detail" id="ram-used-detail">Usado: -- GB</div>
+              <div class="progress-bar-tech" style="margin-top: 0.35rem;">
+                <div class="progress-fill-tech" id="ram-progress" style="width: 0%;"></div>
+              </div>
+            </div>
+            <div style="margin-top: 0.5rem;">
+              <button class="btn btn-secondary btn-sm" id="btn-run-ramtest" onclick="runRamTest()">Repetir test de RAM
+                (256MB)</button>
+              <p class="sub-detail" id="ram-test-status"
+                style="margin-top: 0.35rem; color: #a855f7; font-family: var(--font-mono); font-size: 0.75rem;">
+                Analizando memoria...</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- CARD 3: SALUD DE BATERÍA -->
+        <div class="card">
+          <div class="card-spec-item">
+            <span class="spec-label">Salud de batería y puerto de carga</span>
+            <div class="spec-value" id="bat-status-text">--</div>
+          </div>
+          <div id="charge-alert-banner"></div>
+          <div class="bat-metrics-grid">
+            <div class="bat-metric-item"><span>Ciclos de carga:</span> <strong id="bat-cycles"
+                style="color: #a855f7;">--</strong></div>
+            <div class="bat-metric-item"><span>Salud real:</span> <strong id="bat-health-val"
+                class="highlight-purple">--%</strong></div>
+            <div class="bat-metric-item"><span>Carga actual:</span> <strong id="bat-capacity">--%</strong></div>
+            <div class="bat-metric-item"><span>Capacidad de fábrica:</span> <span id="bat-design-wh">-- Wh</span></div>
+            <div class="bat-metric-item"><span>Capacidad máxima:</span> <span id="bat-full-wh">-- Wh</span></div>
+            <div class="bat-metric-item"><span>Voltaje actual:</span> <span id="bat-voltage">-- V</span></div>
+          </div>
+        </div>
+
+        <!-- CARD 4: VENTILADORES Y SENSORES TÉRMICOS -->
+        <div class="card">
+          <div class="card-spec-item">
+            <span class="spec-label">Ventiladores y sensores térmicos</span>
+          </div>
+          <div id="fans-list" class="sensor-list" style="margin-top: 0.4rem;">
+            <div class="sensor-item">Cargando sensores de ventilador...</div>
+          </div>
+          <div id="temps-list" class="sensor-list" style="margin-top: 0.4rem;">
+            <div class="sensor-item">Cargando temperaturas...</div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- FILA 2: ALMACENAMIENTO, PLACA Y CONECTIVIDAD (4 TARJETAS) -->
+      <div class="hardware-cards-layout" style="margin-top: 1.25rem;">
+
+        <!-- CARD 5: DISCO INTERNO SSD CON BOTÓN OPAL -->
+        <div class="card">
+          <div id="storage-list">
+            <div class="card-spec-item">
+              <span class="spec-label">Disco interno SSD</span>
+              <p class="spec-value spec-value-detail">Escaneando unidades SSD...</p>
+            </div>
+          </div>
+          <div style="margin-top: 0.75rem;">
+            <button class="btn btn-secondary btn-sm" onclick="openOpalModal()">Desbloquear disco (McAfee / TCG
+              Opal)</button>
+          </div>
+        </div>
+
+        <!-- CARD 6: PLACA MADRE & PUERTO HDMI EXTERNO -->
+        <div class="card">
+          <div class="card-spec-item">
+            <span class="spec-label">Placa base</span>
+            <div class="spec-value" id="mobo-name">--</div>
+          </div>
+          <div class="card-spec-item">
+            <span class="spec-label">Versión de BIOS</span>
+            <div class="spec-value spec-value-detail" id="mobo-bios">--</div>
+          </div>
+          <div class="card-spec-item">
+            <span class="spec-label">Puerto HDMI externo</span>
+            <div class="spec-value spec-value-detail" id="hdmi-status-text">Detectando HDMI...</div>
+          </div>
+        </div>
+
+        <!-- CARD 7: BLUETOOTH HARDWARE -->
+        <div class="card">
+          <div class="card-spec-item">
+            <span class="spec-label">Adaptador Bluetooth</span>
+            <div class="spec-value" id="bt-status-text" style="color: var(--success-green);">Escaneando Bluetooth...
+            </div>
+          </div>
+          <div class="card-spec-item">
+            <span class="spec-label">Controlador</span>
+            <div class="spec-value spec-value-detail" id="bt-name-detail">--</div>
+          </div>
+        </div>
+
+        <!-- CARD 8: ALMACENAMIENTO USB / EXTERNO -->
+        <div class="card">
+          <div id="usb-storage-list">
+            <div class="card-spec-item">
+              <span class="spec-label">Almacenamiento USB</span>
+              <div class="spec-value spec-value-detail" id="usb-storage-status">Sin unidades USB conectadas</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- SECTION 2: TECLADO -->
+    <section id="sec-keyboard" class="qa-section">
+      <div class="section-title">
+        <h2>Prueba de teclado</h2>
+      </div>
+
+      <div class="key-tester-stats">
+        <div class="stat-box">Teclas presionadas: <strong id="key-count">0</strong> / 78 total</div>
+        <div class="stat-box">Última tecla: <strong id="last-key-code">Ninguna</strong></div>
+        <button class="btn btn-secondary" onclick="resetKeyboardTest()">Reiniciar matriz</button>
+      </div>
+
+      <div class="keyboard-wrapper">
+        <div class="keyboard-container" id="keyboard-matrix">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+    </section>
+
+    <!-- TOUCHPAD SECTION -->
+    <section id="sec-touchpad" class="qa-section">
+      <div class="section-title">
+        <h2>Prueba de touchpad y clics</h2>
+      </div>
+
+      <div class="touchpad-grid">
+        <!-- LEFT CLICK TILE -->
+        <div class="click-tile" id="tile-left-click">
+          <h3>Clic izquierdo</h3>
+          <p class="click-status" id="status-left-click">No presionado</p>
+        </div>
+
+        <!-- CANVAS CENTER -->
+        <div class="touchpad-canvas-card">
+          <h3>Lienzo de trazo y gestos multitáctiles</h3>
+          <div class="touchpad-canvas-wrapper">
+            <canvas id="touchpad-canvas" width="600" height="170"></canvas>
+            <div class="touch-events-log" id="touch-log">Eventos touchpad: En espera...</div>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="clearTouchCanvas()">Limpiar lienzo</button>
+        </div>
+
+        <!-- RIGHT CLICK / 2 FINGERS TILE -->
+        <div class="click-tile" id="tile-right-click">
+          <h3>Clic derecho / 2 dedos</h3>
+          <p class="click-status" id="status-right-click">No presionado</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 3: MULTIMEDIA -->
+    <section id="sec-av" class="qa-section">
+      <div class="section-title">
+        <h2>Cámara, audio y micrófono</h2>
+      </div>
+
+      <div class="av-grid">
+        <!-- CAMERA CARD -->
+        <div class="card av-card">
+          <h3>Cámara</h3>
+          <div class="camera-preview-container">
+            <video id="camera-video" autoplay playsinline muted></video>
+            <div class="camera-overlay" id="cam-overlay">Cámara inactiva</div>
+          </div>
+          <div class="controls-row">
+            <button class="btn" onclick="startCamera()">Iniciar cámara</button>
+            <button class="btn btn-secondary" onclick="stopCamera()">Detener</button>
+            <span class="info-tag" id="cam-res-info">Res: --</span>
+          </div>
+        </div>
+
+        <!-- AUDIO SWEEP & MIC CARD -->
+        <div class="card av-card">
+          <h3>Parlantes</h3>
+
+          <div class="audio-test-box">
+            <!-- SPEAKER VOLUME CONTROL SLIDER -->
+            <div class="volume-slider-container"
+              style="margin-bottom: 0.9rem; padding: 0.5rem 0.75rem; background: rgba(0, 0, 0, 0.25); border-radius: 8px; display: flex; align-items: center; gap: 0.75rem; border: 1px solid rgba(168, 85, 247, 0.3);">
+              <label for="speaker-vol-range"
+                style="font-size: 0.8rem; font-weight: 700; color: #a855f7; white-space: nowrap;">Volumen
+                parlantes:</label>
+              <input type="range" id="speaker-vol-range" min="0" max="100" value="80"
+                oninput="updateSpeakerVolume(this.value)" style="flex: 1; accent-color: #a855f7; cursor: pointer;">
+              <span id="speaker-vol-val"
+                style="font-family: var(--font-mono); font-weight: 800; color: #a855f7; min-width: 42px; text-align: right;">80%</span>
+            </div>
+
+            <div class="btn-group">
+              <button class="btn btn-audio" id="btn-audio-left" onclick="playFrequencySweep('left')">1. Barrido
+                izquierda</button>
+              <button class="btn btn-audio" id="btn-audio-right" onclick="playFrequencySweep('right')">2. Barrido
+                derecha</button>
+              <button class="btn btn-audio" id="btn-audio-both" onclick="playFrequencySweep('both')">3. Barrido
+                ambos</button>
+            </div>
+            <p class="audio-status-text" id="audio-status-text">Prueba requerida: 0/3 completados</p>
+          </div>
+
+          <hr class="divider">
+
+          <div class="mic-test-box">
+            <h4>Prueba de micrófono integrado:</h4>
+            <div class="vu-meter-container">
+              <div class="vu-bar" id="mic-vu-bar" style="width: 0%;"></div>
+            </div>
+            <div class="mic-status" id="mic-status-text">Micrófono: Inactivo</div>
+
+            <div class="btn-group">
+              <button class="btn" onclick="startMicTest()">Activar micrófono</button>
+              <button class="btn btn-secondary" onclick="stopMicTest()">Detener</button>
+              <button class="btn btn-record" id="btn-rec-loop" onclick="recordAndPlayMic()">Grabar 3s y
+                escuchar</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 4: WIFI Y RED -->
+    <section id="sec-wifi" class="qa-section">
+      <div class="section-title">
+        <h2>Conectividad Wi-Fi</h2>
+      </div>
+
+      <div class="card wifi-card">
+        <div class="wifi-header-status">
+          <p>Estado de redes: <strong id="wifi-auto-status" class="highlight-purple">Escaneando Wi-Fi...</strong></p>
+        </div>
+
+        <h4>Redes Wi-Fi detectadas cercanas:</h4>
+        <div class="networks-table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Nombre de red (SSID)</th>
+                <th>Señal (%)</th>
+              </tr>
+            </thead>
+            <tbody id="wifi-networks-list">
+              <tr>
+                <td colspan="2">Buscando redes cercanas...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- MODAL POPUP: TCG OPAL / MCAFEE PSID UNLOCK -->
+  <div id="opal-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Desbloqueo de disco TCG Opal / McAfee (PSID Revert)</h3>
+        <button class="modal-close-btn" onclick="closeOpalModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+
+        <!-- TARGET DRIVE SELECTOR -->
+        <div class="form-group">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+            <label for="opal-drive-select" style="margin-bottom: 0;"><strong>1. Selecciona la unidad SSD
+                objetivo:</strong></label>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="fetchOpalDrives()"
+              title="Actualizar lista de discos"
+              style="padding: 0.2rem 0.55rem; font-size: 0.75rem; border-radius: 4px;">🔄 Refrescar discos</button>
+          </div>
+          <select id="opal-drive-select" class="form-control">
+            <option value="/dev/nvme0n1">/dev/nvme0n1 (SSD NVMe Principal)</option>
+          </select>
+        </div>
+
+        <!-- WEBCAM SCANNER PREVIEW -->
+        <div class="form-group" style="margin-top: 1rem;">
+          <label><strong>2. Escáner QR de PSID por cámara web:</strong></label>
+          <div class="qr-camera-container">
+            <video id="qr-scanner-video" autoplay playsinline muted></video>
+            <canvas id="qr-canvas" style="display: none;"></canvas>
+            <div id="qr-scan-status-overlay" class="camera-overlay">Iniciando escáner cámara web...</div>
+          </div>
+          <div style="margin-top: 0.4rem; display: flex; gap: 0.5rem;">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="startQrScanner()">Reactivar cámara</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="stopQrScanner()">Detener cámara</button>
+          </div>
+        </div>
+
+        <!-- PSID TEXT INPUT -->
+        <div class="form-group" style="margin-top: 1rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+            <label for="opal-psid-input" style="margin-bottom: 0;"><strong>3. Código PSID (32
+                caracteres):</strong></label>
+            <span id="psid-char-counter"
+              style="font-size: 0.8rem; color: var(--text-muted); font-family: var(--font-mono); font-weight: 600;">0 /
+              32 caracteres</span>
+          </div>
+          <input type="text" id="opal-psid-input" class="form-control-mono"
+            placeholder="Ej: W97C82K19LPX4821N3091LAK92183921" maxlength="32" autocomplete="off" spellcheck="false">
+          <small style="display: block; color: var(--text-muted); font-size: 0.75rem; margin-top: 0.3rem;">
+            💡 El código PSID está impreso en la etiqueta física del disco SSD. Se formateará automáticamente a
+            mayúsculas.
+          </small>
+        </div>
+
+        <!-- EXECUTE BUTTON & STATUS BANNER -->
+        <div style="margin-top: 1.25rem;">
+          <button class="btn btn-block" id="btn-exec-opal" onclick="submitOpalRevert()">Ejecutar desbloqueo de fábrica
+            (PSID Revert)</button>
+        </div>
+
+        <div id="opal-result-banner" style="margin-top: 1rem;"></div>
+
+        <!-- TECHNICAL LOG OUTPUT -->
+        <div id="opal-log-container" style="display: none; margin-top: 1rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem;">
+            <span style="font-size: 0.78rem; font-weight: 600; color: var(--text-muted);">Registro de comandos del
+              sistema:</span>
+          </div>
+          <pre id="opal-log-output"
+            style="background: #0d0f17; border: 1px solid var(--border-color); border-radius: 6px; padding: 0.65rem; font-size: 0.74rem; color: #a5b4fc; max-height: 140px; overflow-y: auto; font-family: var(--font-mono); white-space: pre-wrap; line-height: 1.4;"></pre>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL DE CONFIRMACION: APAGAR / REINICIAR -->
+  <div id="power-modal" class="modal-overlay" style="display:none;">
+    <div class="modal-content" style="max-width:420px;">
+      <div class="modal-header">
+        <h3 id="power-modal-title">Confirmar acción</h3>
+        <button class="modal-close-btn" onclick="closePowerModal()">&times;</button>
+      </div>
+      <div class="modal-body" style="text-align:center; padding: 2rem 1.5rem;">
+        <p id="power-modal-msg" style="font-size:1rem; color:var(--text-main); margin-bottom:1.5rem;"></p>
+        <div style="display:flex; gap:1rem; justify-content:center;">
+          <button id="power-confirm-btn" class="btn" onclick="executePowerAction()">Confirmar</button>
+          <button class="btn btn-secondary" onclick="closePowerModal()">Cancelar</button>
+        </div>
+        <p id="power-result-msg" style="margin-top:1rem; font-family:var(--font-mono); font-size:0.85rem;"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL DE PRUEBAS DE ESTRÉS (CPU, RAM DDR3/4/5, SSD, GPU) -->
+  <div id="stress-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-content modal-stress-content">
+      <div class="modal-header">
+        <h3>Pruebas de estrés y estabilidad</h3>
+        <button class="modal-close-btn" onclick="closeStressModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+
+        <!-- CONFIGURATION FORM -->
+        <div id="stress-config-container">
+          <!-- STEP 1: COMPONENT SELECTION -->
+          <div class="stress-config-section">
+            <label class="stress-section-label">1. Selecciona los componentes a probar:</label>
+            <div class="stress-components-grid">
+              <label class="stress-check-card">
+                <input type="checkbox" id="chk-stress-cpu" checked>
+                <div class="chk-content">
+                  <div>
+                    <strong>Procesador</strong>
+                  </div>
+                </div>
+              </label>
+              <label class="stress-check-card">
+                <input type="checkbox" id="chk-stress-ram" checked>
+                <div class="chk-content">
+                  <div>
+                    <strong>RAM</strong>
+                  </div>
+                </div>
+              </label>
+              <label class="stress-check-card">
+                <input type="checkbox" id="chk-stress-ssd" checked>
+                <div class="chk-content">
+                  <div>
+                    <strong>SSD</strong>
+                  </div>
+                </div>
+              </label>
+              <label class="stress-check-card">
+                <input type="checkbox" id="chk-stress-gpu" checked>
+                <div class="chk-content">
+                  <div>
+                    <strong>GPU</strong>
+                  </div>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <!-- STEP 2: INTENSITY LEVEL -->
+          <div class="stress-config-section" style="margin-top: 1.25rem;">
+            <label class="stress-section-label">2. Nivel de intensidad y duración:</label>
+            <div class="stress-levels-grid">
+              <button type="button" class="btn-level-pill active" id="btn-lvl-quick"
+                onclick="selectStressLevel('quick')">
+                <span class="level-dot dot-green"></span>
+                <div>
+                  <strong>Rápida</strong>
+                  <span class="sub">~2.5 min</span>
+                </div>
+              </button>
+              <button type="button" class="btn-level-pill" id="btn-lvl-medium" onclick="selectStressLevel('medium')">
+                <span class="level-dot dot-yellow"></span>
+                <div>
+                  <strong>Media</strong>
+                  <span class="sub">~6 min</span>
+                </div>
+              </button>
+              <button type="button" class="btn-level-pill" id="btn-lvl-deep" onclick="selectStressLevel('deep')">
+                <span class="level-dot dot-red"></span>
+                <div>
+                  <strong>Profunda</strong>
+                  <span class="sub">~15 min</span>
+                </div>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- LIVE TELEMETRY & PROGRESS PANEL -->
+        <div id="stress-live-panel" class="stress-live-card" style="display: none; margin-top: 1.25rem;">
+          <div class="stress-live-header">
+            <div>
+              <span id="stress-current-badge" class="badge-purple">En espera</span>
+              <span id="stress-time-display"
+                style="font-family: var(--font-mono); margin-left: 0.5rem; font-size: 0.85rem; color: #38bdf8;">00:00 /
+                00:00</span>
+            </div>
+            <div class="stress-telemetry-pill">
+              <span>Temp: <strong id="stress-temp-val">-- °C</strong></span>
+              <span style="margin-left: 0.75rem;">Temp Max: <strong id="stress-max-temp-val" style="color: #fca5a5;">--
+                  °C</strong></span>
+            </div>
+          </div>
+
+          <div class="progress-bar-tech" style="height: 10px; margin-top: 0.75rem;">
+            <div id="stress-progress-fill" class="progress-fill-tech" style="width: 0%;"></div>
+          </div>
+
+          <!-- WebGL Canvas for 3D Shader Stress (Visible during GPU test) -->
+          <div id="stress-gpu-canvas-container" class="stress-gpu-box" style="display: none; margin-top: 0.75rem;">
+            <canvas id="stress-webgl-canvas" width="600" height="140"></canvas>
+            <div class="gpu-fps-overlay" id="stress-gpu-fps">GPU 3D Shader: 60 FPS</div>
+          </div>
+
+          <!-- Live Log Console -->
+          <div class="stress-log-console" id="stress-log-console">
+            <div class="log-line info">[Sistema] Listo para iniciar prueba de estrés.</div>
+          </div>
+        </div>
+
+        <!-- FINAL RESULTS REPORT -->
+        <div id="stress-results-report" class="stress-report-card" style="display: none; margin-top: 1rem;">
+          <!-- Dynamically populated -->
+        </div>
+
+        <!-- ACTION BUTTONS -->
+        <div class="stress-actions-bar" style="margin-top: 1.25rem; display: flex; gap: 0.75rem;">
+          <button id="btn-start-stress" class="btn btn-block" onclick="startStressTest()">Iniciar prueba de
+            estrés</button>
+          <button id="btn-stop-stress" class="btn btn-danger btn-block" style="display: none;"
+            onclick="stopStressTest()">Abortar prueba</button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL / FULLSCREEN OVERLAY: PRUEBA DE PANTALLA (PÍXELES QUEMADOS / UNIFORMIDAD) -->
+  <div id="screen-test-modal" class="screen-test-fullscreen" style="display: none;"
+    onclick="nextScreenTestColor(event)">
+    <div class="screen-test-top-bar" id="screen-test-bar">
+      <span class="screen-test-info" id="screen-color-label">Color 1/9: 1. Rojo puro (#FF0000)</span>
+      <span class="screen-test-hint">Haz clic o presiona [Espacio / Flechas] para avanzar | [ESC] para salir</span>
+      <button class="btn btn-sm btn-danger" onclick="closeScreenTestModal(event)">Salir (ESC)</button>
+    </div>
+    <div class="screen-test-canvas" id="screen-test-canvas"></div>
+  </div>
+
+  <!-- DIAGNOSTDONOR Modular Architecture -->
+  <script src="js/ui.js"></script>
+  <script src="js/keyboard.js"></script>
+  <script src="js/touchpad.js"></script>
+  <script src="js/media.js"></script>
+  <script src="js/opal.js"></script>
+  <script src="js/stress.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/main.js"></script>
+</body>
+
+</html>
