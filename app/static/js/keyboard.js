@@ -194,6 +194,11 @@ function initKeyListeners() {
 
     if (isInput) {
       if (e.key === "Escape") {
+        const confirmModal = document.getElementById("opal-confirm-modal");
+        if (confirmModal && confirmModal.style.display !== "none") {
+          closeOpalConfirmModal();
+          return;
+        }
         closeOpalModal();
         if (typeof closePowerModal === "function") closePowerModal();
       } else if (e.key === "Enter" && e.target.id === "opal-psid-input") {

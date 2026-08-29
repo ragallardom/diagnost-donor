@@ -25,11 +25,16 @@ from thermal import get_thermal_and_fans
 from system_info import get_system_summary
 from wifi_diag import get_wifi_status
 from storage_diag import get_storage_info
-from bluetooth_diag import get_bluetooth_info
+from bluetooth_diag import (
+    get_bluetooth_info,
+    start_bluetooth_receiver,
+    stop_bluetooth_receiver,
+    get_bluetooth_receiver_status
+)
 from display_hdmi_diag import get_display_and_mobo
 from ram_benchmark import run_ram_benchmark
 from cpu_benchmark import run_cpu_benchmark
-from opal_diag import list_target_drives, execute_psid_revert
+from opal_diag import list_target_drives, execute_psid_revert, execute_nvme_crypto_erase
 from stress_diag import start_stress_test, stop_stress_test, get_stress_status
 
 PORT = 8080
@@ -97,6 +102,13 @@ class DiagnosticHandler(http.server.SimpleHTTPRequestHandler):
         if self.path == '/api/stress/status':
             try:
                 self.send_json(get_stress_status())
+            except Exception as exc:
+                self.send_json({'error': str(exc)}, 500)
+            return
+
+        if self.path == '/api/bluetooth-psid-status':
+            try:
+                self.send_json(get_bluetooth_receiver_status())
             except Exception as exc:
                 self.send_json({'error': str(exc)}, 500)
             return
@@ -183,6 +195,31 @@ class DiagnosticHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_json(execute_psid_revert(device, psid))
             except Exception as exc:
                 self.send_json({'success': False, 'message': f'Error: {exc}'}, 400)
+            return
+
+        if self.path == '/api/nvme-crypto-erase':
+            try:
+                payload = json.loads(body.decode('utf-8')) if body else {}
+                device = payload.get('device', '/dev/nvme0n1')
+                self.send_json(execute_nvme_crypto_erase(device))
+            except Exception as exc:
+                self.send_json({'success': False, 'message': f'Error: {exc}'}, 400)
+            return
+
+        if self.path == '/api/bluetooth-receiver/start':
+            try:
+                payload = json.loads(body.decode('utf-8')) if body else {}
+                dev_name = payload.get('name', 'DIAGNOST-DONOR')
+                self.send_json(start_bluetooth_receiver(dev_name))
+            except Exception as exc:
+                self.send_json({'error': str(exc)}, 500)
+            return
+
+        if self.path == '/api/bluetooth-receiver/stop':
+            try:
+                self.send_json(stop_bluetooth_receiver())
+            except Exception as exc:
+                self.send_json({'error': str(exc)}, 500)
             return
 
         if self.path == '/api/shutdown':

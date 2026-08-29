@@ -7,7 +7,17 @@
 function markCheckpassed(pillId, text) {
   const el = document.getElementById(pillId);
   if (el) {
+    el.classList.remove("failed");
     el.classList.add("passed");
+    if (text) el.innerText = text;
+  }
+}
+
+function markCheckfailed(pillId, text) {
+  const el = document.getElementById(pillId);
+  if (el) {
+    el.classList.remove("passed");
+    el.classList.add("failed");
     if (text) el.innerText = text;
   }
 }
@@ -16,6 +26,7 @@ function unmarkCheckpassed(pillId, text) {
   const el = document.getElementById(pillId);
   if (el) {
     el.classList.remove("passed");
+    el.classList.remove("failed");
     if (text) el.innerText = text;
   }
 }
@@ -324,6 +335,53 @@ function updateStorageTab(storage) {
     if (internalList.length > 0) {
       internalContainer.innerHTML = internalList.map(s => {
         const smartText = (s.smart_status || '').includes('100%') ? 'Salud 100% (Sin errores)' : (s.smart_status || 'Correcto');
+        const devReadPassed = s.device_read_test !== 'FAILED';
+        const nvmeReadPassed = s.nvme_read_test !== 'FAILED';
+        const isOpal = s.is_opal_locked || (!devReadPassed && !nvmeReadPassed);
+
+        let readSectionHtml = '';
+        if (s.device_read_test && s.nvme_read_test) {
+          readSectionHtml = `
+            <div class="card-spec-item">
+              <span class="spec-label">Pruebas de lectura</span>
+              <div class="spec-value spec-value-detail" style="font-family: var(--font-mono); font-size: 0.82rem;">
+                Device Read: <span style="color: ${devReadPassed ? 'var(--success-green)' : '#f87171'}; font-weight: 700;">${s.device_read_test}</span> | 
+                NVMe Read: <span style="color: ${nvmeReadPassed ? 'var(--success-green)' : '#f87171'}; font-weight: 700;">${s.nvme_read_test}</span>
+              </div>
+            </div>
+          `;
+        }
+
+        let opalAlertHtml = '';
+        if (isOpal) {
+          opalAlertHtml = `
+            <div class="card-spec-item" style="background: rgba(239, 68, 68, 0.08); border-left: 3px solid #ef4444; border-radius: 4px; padding: 0.45rem 0.6rem; margin-top: 0.35rem; display: flex; flex-direction: column; gap: 0.35rem;">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span class="spec-label" style="color: #fca5a5; font-size: 0.78rem; margin: 0;">Diagnostico</span>
+                <span style="font-size: 0.72rem; color: #cbd5e1; font-family: var(--font-mono);">${s.crypto_status_label || 'Compatible (NVMe Sanitize)'}</span>
+              </div>
+              <div class="spec-value spec-value-detail" style="color: #f87171; font-weight: 700; font-size: 0.82rem;">
+                Disco posiblemente encriptado con OPAL
+              </div>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="openOpalModalWithDrive('${s.device}')" style="padding: 0.3rem 0.5rem; font-size: 0.75rem; border-color: rgba(239, 68, 68, 0.4); color: #fecaca; width: 100%; margin-top: 0.15rem;">
+                Desbloquear disco (Crypto Erase / PSID)
+              </button>
+            </div>
+          `;
+        }
+
+        let cryptoCompatHtml = '';
+        if (!isOpal && s.crypto_supported) {
+          cryptoCompatHtml = `
+            <div class="card-spec-item">
+              <span class="spec-label">Borrado seguro</span>
+              <div class="spec-value spec-value-detail" style="font-size: 0.78rem; color: #a5b4fc; font-family: var(--font-mono);">
+                ${s.crypto_status_label || 'Compatible (NVMe Sanitize / SES-2)'}
+              </div>
+            </div>
+          `;
+        }
+
         return `
           <div class="card-spec-item">
             <span class="spec-label">Disco interno (${s.type || 'SSD'})</span>
@@ -335,10 +393,13 @@ function updateStorageTab(storage) {
           </div>
           <div class="card-spec-item">
             <span class="spec-label">Salud del disco (SMART)</span>
-            <div class="spec-value spec-value-detail" style="color: var(--success-green); font-weight: 700;">
-              ${smartText}
+            <div class="spec-value spec-value-detail" style="color: ${isOpal ? '#f59e0b' : 'var(--success-green)'}; font-weight: 700;">
+              ${isOpal ? 'SMART PASSED (Controlador activo)' : smartText}
             </div>
           </div>
+          ${readSectionHtml}
+          ${cryptoCompatHtml}
+          ${opalAlertHtml}
         `;
       }).join("<hr class='divider' style='margin: 0.6rem 0;'>");
       markCheckpassed("chk-ssd", "SSD");
@@ -449,10 +510,11 @@ function updateDisplayTab(display) {
   }
 }
 
-// 7. UPDATE WI-FI NETWORKS TABLE
+// 7. UPDATE WI-FI & ETHERNET NETWORKS TABLE
 function updateWifiTab(wifi) {
   if (!wifi) return;
 
+  // 7a. Wi-Fi networks and adapter
   const listContainer = document.getElementById("wifi-networks-list");
   if (listContainer) {
     if (wifi.nearby_networks && wifi.nearby_networks.length > 0) {
@@ -489,6 +551,56 @@ function updateWifiTab(wifi) {
       unmarkCheckpassed("chk-wifi", "Wi-Fi");
     }
   }
+
+  // 7b. Ethernet RJ-45
+  const eth = wifi.ethernet;
+  if (eth) {
+    const ethStatus = document.getElementById("eth-status-text");
+    const ethIface = document.getElementById("eth-iface-text");
+    const ethCarrier = document.getElementById("eth-carrier-text");
+
+    if (eth.present && eth.connected) {
+      markCheckpassed("chk-eth", "ETHERNET");
+      if (ethStatus) {
+        ethStatus.innerText = "Cable conectado OK";
+        ethStatus.style.color = "var(--success-green)";
+      }
+      if (ethIface && eth.primary) {
+        const speedStr = eth.primary.speed_mbps ? ` (${eth.primary.speed_mbps} Mbps)` : "";
+        ethIface.innerHTML = `<code>${eth.primary.interface}</code>${speedStr}`;
+      }
+      if (ethCarrier) {
+        ethCarrier.innerText = "Enlace activo y transmitiendo";
+        ethCarrier.style.color = "var(--success-green)";
+      }
+    } else if (eth.present && !eth.connected) {
+      unmarkCheckpassed("chk-eth", "Ethernet");
+      if (ethStatus) {
+        ethStatus.innerText = "Puerto disponible (Esperando conexión...)";
+        ethStatus.style.color = "var(--text-main)";
+      }
+      if (ethIface && eth.primary) {
+        ethIface.innerHTML = `<code>${eth.primary.interface}</code>`;
+      }
+      if (ethCarrier) {
+        ethCarrier.innerText = "Cable desconectado (Inserta cable RJ-45 para probar)";
+        ethCarrier.style.color = "var(--text-muted)";
+      }
+    } else {
+      markCheckfailed("chk-eth", "ETHERNET");
+      if (ethStatus) {
+        ethStatus.innerText = "No disponible / Sin puerto integrado";
+        ethStatus.style.color = "var(--danger-red)";
+      }
+      if (ethIface) {
+        ethIface.innerHTML = `<code>No integrado</code>`;
+      }
+      if (ethCarrier) {
+        ethCarrier.innerText = "Sin puerto RJ-45 en este equipo";
+        ethCarrier.style.color = "var(--text-muted)";
+      }
+    }
+  }
 }
 
 // 8. UPDATE TARGET OPAL DRIVE SELECTOR
@@ -511,7 +623,7 @@ function updateDriveSelector(storage) {
     const dev = s.device || s.name || "";
     const model = s.model || "Disco SSD";
     const type = s.type || (s.transport ? `${s.transport} SSD` : (s.is_usb ? "USB SSD" : "SSD"));
-    const lockedBadge = s.is_opal_locked ? " 🔒 [BLOQUEADO OPAL]" : "";
+    const lockedBadge = s.is_opal_locked ? " [BLOQUEADO OPAL]" : "";
     return `<option value="${dev}">${dev} - ${model} (${type})${lockedBadge}</option>`;
   }).join("");
 

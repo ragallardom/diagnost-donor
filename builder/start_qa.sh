@@ -124,8 +124,13 @@ fuser -k 8080/tcp >/dev/null 2>&1 || true
 python3 "$APP_DIR/server.py" > /tmp/qa_server.log 2>&1 &
 SERVER_PID=$!
 
-# Wait for server to initialize
-sleep 1.5
+# Wait for server to initialize and verify readiness
+for i in $(seq 1 20); do
+  if curl -s http://localhost:8080/ >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.2
+done
 
 # Chrome flags: Kiosk real + sin barras de advertencia ni scroll
 rm -rf /tmp/chrome-profile

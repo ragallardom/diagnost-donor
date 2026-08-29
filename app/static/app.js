@@ -124,7 +124,10 @@ async function openOpalModal() {
 
 function closeOpalModal() {
   stopQrScanner();
-  document.getElementById("opal-modal").style.display = "none";
+  const confirmModal = document.getElementById("opal-confirm-modal");
+  if (confirmModal) confirmModal.style.display = "none";
+  const modal = document.getElementById("opal-modal");
+  if (modal) modal.style.display = "none";
 }
 
 function updateDriveSelector(drives) {
@@ -138,19 +141,24 @@ function updateDriveSelector(drives) {
 async function startQrScanner() {
   const video = document.getElementById("qr-scanner-video");
   const overlay = document.getElementById("qr-scan-status-overlay");
+  const reticle = document.getElementById("qr-target-reticle");
+  if (!video) return;
+
+  if (reticle) reticle.classList.remove("detected");
 
   try {
     qrStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "environment", width: { ideal: 640 }, height: { ideal: 480 } }
+      video: { facingMode: { ideal: "user" }, width: { ideal: 1280, min: 640 }, height: { ideal: 720, min: 480 } }
     });
     video.srcObject = qrStream;
-    overlay.innerText = "Buscando código QR / DataMatrix...";
-
-    video.onloadedmetadata = () => {
-      scanQrLoop();
-    };
+    if (overlay) overlay.style.display = "none";
+    await video.play().catch(e => console.warn(e));
+    scanQrLoop();
   } catch (err) {
-    overlay.innerText = "Cámara no disponible para escáner QR. Puedes escribir el PSID manualmente.";
+    if (overlay) {
+      overlay.style.display = "flex";
+      overlay.innerText = "Cámara no disponible para escáner QR. Puedes escribir el PSID manualmente.";
+    }
   }
 }
 
@@ -159,29 +167,33 @@ function scanQrLoop() {
   const canvas = document.getElementById("qr-canvas");
   const overlay = document.getElementById("qr-scan-status-overlay");
 
-  if (!qrStream || video.readyState !== video.HAVE_ENOUGH_DATA) {
+  if (!qrStream || !video || video.readyState < video.HAVE_CURRENT_DATA) {
     qrAnimId = requestAnimationFrame(scanQrLoop);
     return;
   }
 
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
-  const ctx = canvas.getContext("2d");
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
   if (window.jsQR) {
     const code = window.jsQR(imageData.data, imageData.width, imageData.height, {
-      inversionAttempts: "dontInvert",
+      inversionAttempts: "attemptBoth",
     });
 
     if (code && code.data) {
       const psidText = code.data.trim().replace(/[^A-Za-z0-9]/g, "").toUpperCase();
       if (psidText.length >= 10) {
-        document.getElementById("opal-psid-input").value = psidText;
-        overlay.innerText = `QR DETECTADO: ${psidText}`;
-        overlay.style.color = "var(--success-green)";
+        const psidInput = document.getElementById("opal-psid-input");
+        if (psidInput) psidInput.value = psidText.substring(0, 32);
+        if (overlay) {
+          overlay.style.display = "flex";
+          overlay.innerText = `Código QR detectado: ${psidText.substring(0, 32)}`;
+          overlay.style.color = "var(--success-green)";
+        }
         stopQrScanner();
         return;
       }
@@ -192,7 +204,10 @@ function scanQrLoop() {
 }
 
 function stopQrScanner() {
-  if (qrAnimId) cancelAnimationFrame(qrAnimId);
+  if (qrAnimId) {
+    cancelAnimationFrame(qrAnimId);
+    qrAnimId = null;
+  }
   if (qrStream) {
     qrStream.getTracks().forEach(t => t.stop());
     qrStream = null;
@@ -201,27 +216,70 @@ function stopQrScanner() {
   if (video) video.srcObject = null;
 }
 
-async function submitOpalRevert() {
+function submitOpalRevert() {
   const drive = document.getElementById("opal-drive-select").value;
   const psid = document.getElementById("opal-psid-input").value.trim();
   const banner = document.getElementById("opal-result-banner");
-  const btn = document.getElementById("btn-exec-opal");
 
-  if (!psid) {
-    banner.innerHTML = `
-      <div style="background: rgba(239, 68, 68, 0.2); border: 1px solid var(--danger-red); color: #fca5a5; padding: 0.75rem; border-radius: 6px; font-weight: 700;">
-        Por favor ingresa o escanea el código PSID de 32 caracteres.
-      </div>
-    `;
+  if (!drive) {
+    if (banner) {
+      banner.innerHTML = `
+        <div style="background: rgba(239, 68, 68, 0.2); border: 1px solid var(--danger-red); color: #fca5a5; padding: 0.75rem; border-radius: 6px; font-weight: 700;">
+          Por favor selecciona una unidad de disco objetivo.
+        </div>
+      `;
+    }
     return;
   }
 
-  banner.innerHTML = `
-    <div style="background: rgba(124, 58, 237, 0.2); border: 1px solid var(--primary-violet); color: #ddd6fe; padding: 0.75rem; border-radius: 6px;">
-      Ejecutando comando TCG Opal / PSID Revert en ${drive}... Por favor espera...
-    </div>
-  `;
-  btn.disabled = true;
+  if (!psid || psid.length !== 32) {
+    if (banner) {
+      banner.innerHTML = `
+        <div style="background: rgba(239, 68, 68, 0.2); border: 1px solid var(--danger-red); color: #fca5a5; padding: 0.75rem; border-radius: 6px; font-weight: 700;">
+          Por favor ingresa o escanea el código PSID de 32 caracteres.
+        </div>
+      `;
+    }
+    return;
+  }
+
+  if (banner) banner.innerHTML = "";
+
+  pendingOpalDevice = drive;
+  pendingOpalPsid = psid;
+
+  const confirmDeviceEl = document.getElementById("opal-confirm-device-text");
+  const confirmPsidEl = document.getElementById("opal-confirm-psid-text");
+  if (confirmDeviceEl) confirmDeviceEl.innerText = drive;
+  if (confirmPsidEl) confirmPsidEl.innerText = psid;
+
+  const confirmModal = document.getElementById("opal-confirm-modal");
+  if (confirmModal) confirmModal.style.display = "flex";
+}
+
+function closeOpalConfirmModal() {
+  const confirmModal = document.getElementById("opal-confirm-modal");
+  if (confirmModal) confirmModal.style.display = "none";
+}
+
+async function executeOpalRevertConfirmed() {
+  const drive = pendingOpalDevice;
+  const psid = pendingOpalPsid;
+  closeOpalConfirmModal();
+
+  if (!drive || !psid) return;
+
+  const banner = document.getElementById("opal-result-banner");
+  const btn = document.getElementById("btn-exec-opal");
+
+  if (banner) {
+    banner.innerHTML = `
+      <div style="background: rgba(124, 58, 237, 0.2); border: 1px solid var(--primary-violet); color: #ddd6fe; padding: 0.75rem; border-radius: 6px;">
+        Ejecutando comando TCG Opal / PSID Revert en ${drive}... Por favor espera...
+      </div>
+    `;
+  }
+  if (btn) btn.disabled = true;
 
   try {
     const res = await fetch("/api/opal-revert", {
@@ -232,27 +290,36 @@ async function submitOpalRevert() {
     const data = await res.json();
 
     if (data.success) {
-      banner.innerHTML = `
-        <div style="background: rgba(16, 185, 129, 0.2); border: 1px solid var(--success-green); color: var(--success-green); padding: 0.75rem; border-radius: 6px; font-weight: 700;">
-          ${data.message}
-        </div>
-      `;
-      refreshAllData();
+      if (banner) {
+        banner.innerHTML = `
+          <div style="background: rgba(16, 185, 129, 0.2); border: 1px solid var(--success-green); color: var(--success-green); padding: 0.75rem; border-radius: 6px; font-weight: 700;">
+            ${data.message}
+          </div>
+        `;
+      }
+      if (typeof refreshAllData === "function") refreshAllData();
     } else {
+      if (banner) {
+        banner.innerHTML = `
+          <div style="background: rgba(239, 68, 68, 0.2); border: 1px solid var(--danger-red); color: #fca5a5; padding: 0.75rem; border-radius: 6px; font-weight: 700;">
+            ${data.message}
+          </div>
+        `;
+      }
+    }
+  } catch (err) {
+    if (banner) {
       banner.innerHTML = `
         <div style="background: rgba(239, 68, 68, 0.2); border: 1px solid var(--danger-red); color: #fca5a5; padding: 0.75rem; border-radius: 6px; font-weight: 700;">
-          ${data.message}
+          Error al ejecutar PSID Revert: ${err.message}
         </div>
       `;
     }
-  } catch (err) {
-    banner.innerHTML = `
-      <div style="background: rgba(239, 68, 68, 0.2); border: 1px solid var(--danger-red); color: #fca5a5; padding: 0.75rem; border-radius: 6px;">
-        Error de conexión: ${err.message}
-      </div>
-    `;
   } finally {
-    btn.disabled = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = "Ejecutar PSID Revert";
+    }
   }
 }
 
@@ -426,11 +493,77 @@ function updateThermalTab(thermal) {
 
 // UPDATE STORAGE (SSD)
 function updateStorageTab(storage) {
-  if (!storage || storage.length === 0) return;
-  const container = document.getElementById("storage-list");
+  if (!storage) return;
 
-  container.innerHTML = storage.map(s => {
+  let internalList = [];
+  if (Array.isArray(storage)) {
+    internalList = storage.filter(s => !s.is_usb);
+  } else if (typeof storage === "object") {
+    internalList = storage.internal || [];
+  }
+
+  const container = document.getElementById("storage-list");
+  if (!container) return;
+
+  if (internalList.length === 0) {
+    container.innerHTML = `
+      <div class="card-spec-item">
+        <span class="spec-label">Disco interno</span>
+        <div class="spec-value spec-value-detail" style="color: var(--text-muted);">Sin discos internos detectados</div>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = internalList.map(s => {
     const smartText = (s.smart_status || '').includes('100%') ? 'Salud 100% (Sin errores)' : (s.smart_status || 'Correcto');
+    const devReadPassed = s.device_read_test !== 'FAILED';
+    const nvmeReadPassed = s.nvme_read_test !== 'FAILED';
+    const isOpal = s.is_opal_locked || (!devReadPassed && !nvmeReadPassed);
+
+    let readSectionHtml = '';
+    if (s.device_read_test && s.nvme_read_test) {
+      readSectionHtml = `
+        <div class="card-spec-item">
+          <span class="spec-label">Pruebas de lectura</span>
+          <div class="spec-value spec-value-detail" style="font-family: var(--font-mono); font-size: 0.82rem;">
+            Device Read: <span style="color: ${devReadPassed ? 'var(--success-green)' : '#f87171'}; font-weight: 700;">${s.device_read_test}</span> | 
+            NVMe Read: <span style="color: ${nvmeReadPassed ? 'var(--success-green)' : '#f87171'}; font-weight: 700;">${s.nvme_read_test}</span>
+          </div>
+        </div>
+      `;
+    }
+
+    let opalAlertHtml = '';
+    if (isOpal) {
+      opalAlertHtml = `
+        <div class="card-spec-item" style="background: rgba(239, 68, 68, 0.08); border-left: 3px solid #ef4444; border-radius: 4px; padding: 0.45rem 0.6rem; margin-top: 0.35rem; display: flex; flex-direction: column; gap: 0.35rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span class="spec-label" style="color: #fca5a5; font-size: 0.78rem; margin: 0;">Diagnostico</span>
+            <span style="font-size: 0.72rem; color: #cbd5e1; font-family: var(--font-mono);">${s.crypto_status_label || 'Compatible (NVMe Sanitize)'}</span>
+          </div>
+          <div class="spec-value spec-value-detail" style="color: #f87171; font-weight: 700; font-size: 0.82rem;">
+            Disco posiblemente encriptado con OPAL
+          </div>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="openOpalModalWithDrive('${s.device}')" style="padding: 0.3rem 0.5rem; font-size: 0.75rem; border-color: rgba(239, 68, 68, 0.4); color: #fecaca; width: 100%; margin-top: 0.15rem;">
+            Desbloquear disco (Crypto Erase / PSID)
+          </button>
+        </div>
+      `;
+    }
+
+    let cryptoCompatHtml = '';
+    if (!isOpal && s.crypto_supported) {
+      cryptoCompatHtml = `
+        <div class="card-spec-item">
+          <span class="spec-label">Borrado seguro</span>
+          <div class="spec-value spec-value-detail" style="font-size: 0.78rem; color: #a5b4fc; font-family: var(--font-mono);">
+            ${s.crypto_status_label || 'Compatible (NVMe Sanitize / SES-2)'}
+          </div>
+        </div>
+      `;
+    }
+
     return `
       <div class="card-spec-item">
         <span class="spec-label">Disco interno SSD</span>
@@ -442,10 +575,13 @@ function updateStorageTab(storage) {
       </div>
       <div class="card-spec-item">
         <span class="spec-label">Salud del disco (SMART)</span>
-        <div class="spec-value spec-value-detail" style="color: var(--success-green); font-weight: 700;">
-          ${smartText}
+        <div class="spec-value spec-value-detail" style="color: ${isOpal ? '#f59e0b' : 'var(--success-green)'}; font-weight: 700;">
+          ${isOpal ? 'SMART PASSED (Controlador activo)' : smartText}
         </div>
       </div>
+      ${readSectionHtml}
+      ${cryptoCompatHtml}
+      ${opalAlertHtml}
     `;
   }).join("<hr class='divider' style='margin: 0.6rem 0;'>");
 
@@ -506,33 +642,93 @@ function updateDisplayTab(display) {
   }
 }
 
-// UPDATE WIFI & AUTO-APPROVE
+// UPDATE WIFI & ETHERNET AUTO-APPROVE
 function updateWifiTab(wifi) {
   if (!wifi) return;
 
   const listContainer = document.getElementById("wifi-networks-list");
-  if (wifi.nearby_networks && wifi.nearby_networks.length > 0) {
-    document.getElementById("wifi-auto-status").innerText = `Detectadas ${wifi.nearby_networks.length} redes Wi-Fi (Aprobado)`;
-    document.getElementById("wifi-auto-status").style.color = "var(--success-green)";
-    markCheckpassed("chk-wifi", "WI-FI");
+  if (listContainer) {
+    if (wifi.nearby_networks && wifi.nearby_networks.length > 0) {
+      const autoStatus = document.getElementById("wifi-auto-status");
+      if (autoStatus) {
+        autoStatus.innerText = `Detectadas ${wifi.nearby_networks.length} redes Wi-Fi (Aprobado)`;
+        autoStatus.style.color = "var(--success-green)";
+      }
+      markCheckpassed("chk-wifi", "WI-FI");
 
-    listContainer.innerHTML = wifi.nearby_networks.map(net => `
-      <tr>
-        <td><strong>${net.ssid}</strong></td>
-        <td>${net.signal}%</td>
-        <td>${net.connected ? '<span class="badge">Conectado</span>' : 'Disponible'}</td>
-      </tr>
-    `).join("");
-  } else if (wifi.wifi_hardware_present) {
-    document.getElementById("wifi-auto-status").innerText = "Adaptador Wi-Fi operativo (escaneando redes...)";
-    document.getElementById("wifi-auto-status").style.color = "var(--success-green)";
-    markCheckpassed("chk-wifi", "WI-FI");
-    listContainer.innerHTML = `<tr><td colspan="3" style="text-align: center; color: var(--success-green);">Adaptador Wi-Fi detectado y operativo.</td></tr>`;
-  } else {
-    document.getElementById("wifi-auto-status").innerText = "No se detectó adaptador Wi-Fi.";
-    document.getElementById("wifi-auto-status").style.color = "var(--text-muted)";
-    listContainer.innerHTML = `<tr><td colspan="3" style="text-align: center;">No se detectó adaptador Wi-Fi.</td></tr>`;
-    unmarkCheckpassed("chk-wifi", "Wi-Fi");
+      listContainer.innerHTML = wifi.nearby_networks.map(net => `
+        <tr>
+          <td><strong>${net.ssid}</strong></td>
+          <td>${net.signal}%</td>
+        </tr>
+      `).join("");
+    } else if (wifi.wifi_hardware_present) {
+      const autoStatus = document.getElementById("wifi-auto-status");
+      if (autoStatus) {
+        autoStatus.innerText = "Adaptador Wi-Fi operativo (escaneando redes...)";
+        autoStatus.style.color = "var(--success-green)";
+      }
+      markCheckpassed("chk-wifi", "WI-FI");
+      listContainer.innerHTML = `<tr><td colspan="2" style="text-align: center; color: var(--success-green);">Adaptador Wi-Fi detectado y operativo.</td></tr>`;
+    } else {
+      const autoStatus = document.getElementById("wifi-auto-status");
+      if (autoStatus) {
+        autoStatus.innerText = "No se detectó adaptador Wi-Fi.";
+        autoStatus.style.color = "var(--text-muted)";
+      }
+      listContainer.innerHTML = `<tr><td colspan="2" style="text-align: center;">No se detectó adaptador Wi-Fi.</td></tr>`;
+      unmarkCheckpassed("chk-wifi", "Wi-Fi");
+    }
+  }
+
+  // Ethernet RJ-45 handling
+  const eth = wifi.ethernet;
+  if (eth) {
+    const ethStatus = document.getElementById("eth-status-text");
+    const ethIface = document.getElementById("eth-iface-text");
+    const ethCarrier = document.getElementById("eth-carrier-text");
+
+    if (eth.present && eth.connected) {
+      markCheckpassed("chk-eth", "ETHERNET");
+      if (ethStatus) {
+        ethStatus.innerText = "Cable conectado OK";
+        ethStatus.style.color = "var(--success-green)";
+      }
+      if (ethIface && eth.primary) {
+        const speedStr = eth.primary.speed_mbps ? ` (${eth.primary.speed_mbps} Mbps)` : "";
+        ethIface.innerHTML = `<code>${eth.primary.interface}</code>${speedStr}`;
+      }
+      if (ethCarrier) {
+        ethCarrier.innerText = "Enlace activo y transmitiendo";
+        ethCarrier.style.color = "var(--success-green)";
+      }
+    } else if (eth.present && !eth.connected) {
+      unmarkCheckpassed("chk-eth", "Ethernet");
+      if (ethStatus) {
+        ethStatus.innerText = "Puerto disponible (Esperando conexión...)";
+        ethStatus.style.color = "var(--text-main)";
+      }
+      if (ethIface && eth.primary) {
+        ethIface.innerHTML = `<code>${eth.primary.interface}</code>`;
+      }
+      if (ethCarrier) {
+        ethCarrier.innerText = "Cable desconectado (Inserta cable RJ-45 para probar)";
+        ethCarrier.style.color = "var(--text-muted)";
+      }
+    } else {
+      markCheckfailed("chk-eth", "ETHERNET");
+      if (ethStatus) {
+        ethStatus.innerText = "No disponible / Sin puerto integrado";
+        ethStatus.style.color = "var(--danger-red)";
+      }
+      if (ethIface) {
+        ethIface.innerHTML = `<code>No integrado</code>`;
+      }
+      if (ethCarrier) {
+        ethCarrier.innerText = "Sin puerto RJ-45 en este equipo";
+        ethCarrier.style.color = "var(--text-muted)";
+      }
+    }
   }
 }
 
@@ -1094,29 +1290,101 @@ async function recordAndPlayMic() {
     const mediaRecorder = new MediaRecorder(stream);
     const audioChunks = [];
 
-    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-    mediaRecorder.onstop = () => {
-      const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+    mediaRecorder.ondataavailable = e => {
+      if (e.data && e.data.size > 0) audioChunks.push(e.data);
+    };
+
+    mediaRecorder.onstop = async () => {
+      if (audioChunks.length === 0) {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerText = "Grabar 3s y escuchar";
+        }
+        if (statusText) statusText.innerText = "Error: no se capturó audio";
+        unmarkCheckpassed("chk-mic", "Micrófono");
+        stream.getTracks().forEach(t => t.stop());
+        return;
+      }
+
+      const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+
+      // Decode audio and calculate peak and RMS to detect silence / VM dummy device
+      let isSilence = false;
+      try {
+        if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioContext.state === "suspended") await audioContext.resume().catch(() => {});
+        const arrayBuffer = await audioBlob.arrayBuffer();
+        const decodedBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+        const channelData = decodedBuffer.getChannelData(0);
+        let maxPeak = 0;
+        let sumSq = 0;
+        for (let i = 0; i < channelData.length; i++) {
+          const absVal = Math.abs(channelData[i]);
+          if (absVal > maxPeak) maxPeak = absVal;
+          sumSq += absVal * absVal;
+        }
+        const rms = Math.sqrt(sumSq / channelData.length);
+        if (maxPeak < 0.015 || rms < 0.002) {
+          isSilence = true;
+        }
+      } catch (decErr) {
+        console.warn("Análisis de buffer omitido:", decErr);
+      }
+
+      if (isSilence) {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerText = "Grabar 3s y escuchar";
+        }
+        if (statusText) statusText.innerText = "No se detectó audio (micrófono mudo o sin señal)";
+        unmarkCheckpassed("chk-mic", "Micrófono");
+        stream.getTracks().forEach(t => t.stop());
+        return;
+      }
+
       const audioUrl = URL.createObjectURL(audioBlob);
       const audio = new Audio(audioUrl);
-      statusText.innerText = "Reproduciendo grabación de prueba...";
+      if (statusText) statusText.innerText = "Reproduciendo audio grabado...";
       audio.play();
-      btn.innerText = "Grabar 3s y escuchar";
-      btn.disabled = false;
-      stream.getTracks().forEach(t => t.stop());
-      markCheckpassed("chk-mic", "Micrófono");
+
+      audio.onended = () => {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerText = "Grabar 3s y escuchar";
+        }
+        if (statusText) statusText.innerText = "Prueba de audio completada";
+        markCheckpassed("chk-mic", "MICRÓFONO");
+        stream.getTracks().forEach(t => t.stop());
+        URL.revokeObjectURL(audioUrl);
+      };
+
+      audio.onerror = () => {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerText = "Grabar 3s y escuchar";
+        }
+        if (statusText) statusText.innerText = "Error reproduciendo audio";
+        unmarkCheckpassed("chk-mic", "Micrófono");
+        stream.getTracks().forEach(t => t.stop());
+        URL.revokeObjectURL(audioUrl);
+      };
     };
 
     btn.innerText = "Grabando (3s)...";
     btn.disabled = true;
-    statusText.innerText = "Habla ahora para la prueba de 3 segundos...";
+    if (statusText) statusText.innerText = "Grabando audio...";
     mediaRecorder.start();
 
     setTimeout(() => {
       mediaRecorder.stop();
     }, 3000);
   } catch (err) {
-    statusText.innerText = "Error en prueba de grabación: " + err.message;
+    if (btn) {
+      btn.disabled = false;
+      btn.innerText = "Grabar 3s y escuchar";
+    }
+    if (statusText) statusText.innerText = "Error: " + err.message;
+    unmarkCheckpassed("chk-mic", "Micrófono");
   }
 }
 
@@ -1124,7 +1392,17 @@ async function recordAndPlayMic() {
 function markCheckpassed(elementId, text) {
   const el = document.getElementById(elementId);
   if (el) {
+    el.classList.remove("failed");
     el.classList.add("passed");
+    if (text) el.innerText = text;
+  }
+}
+
+function markCheckfailed(elementId, text) {
+  const el = document.getElementById(elementId);
+  if (el) {
+    el.classList.remove("passed");
+    el.classList.add("failed");
     if (text) el.innerText = text;
   }
 }
@@ -1133,6 +1411,7 @@ function unmarkCheckpassed(elementId, text) {
   const el = document.getElementById(elementId);
   if (el) {
     el.classList.remove("passed");
+    el.classList.remove("failed");
     if (text) el.innerText = text;
   }
 }

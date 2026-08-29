@@ -140,11 +140,11 @@ async function playFrequencySweep(channel) {
     if (btn) {
       btn.style.borderColor = "#f59e0b";
       btn.style.color = "#f59e0b";
-      btn.innerText = `🔊 Reproduciendo...`;
+      btn.innerText = "Reproduciendo...";
     }
 
     if (statusEl) {
-      statusEl.innerText = `🔊 Reproduciendo barrido ${channelNames[channel] || channel} (100 Hz - 3500 Hz)...`;
+      statusEl.innerText = `Reproduciendo barrido ${channelNames[channel] || channel} (100 Hz - 3500 Hz)...`;
       statusEl.style.color = "#f59e0b";
     }
 
@@ -411,14 +411,8 @@ async function recordAndPlayMic() {
       }
     };
 
-    micMediaRecorder.onstop = () => {
+    micMediaRecorder.onstop = async () => {
       if (micRecTimer) clearInterval(micRecTimer);
-
-      if (btn) btn.innerText = "Reproduciendo eco...";
-      if (statusEl) {
-        statusEl.innerText = "Reproduciendo audio grabado...";
-        statusEl.style.color = "var(--success-green)";
-      }
 
       if (micAudioChunks.length === 0) {
         if (btn) {
@@ -429,11 +423,53 @@ async function recordAndPlayMic() {
           statusEl.innerText = "Error: no se capturaron datos de audio";
           statusEl.style.color = "var(--danger-red)";
         }
+        unmarkCheckpassed("chk-mic", "Micrófono");
         return;
       }
 
       const mime = (options && options.mimeType) ? options.mimeType : 'audio/webm';
       const audioBlob = new Blob(micAudioChunks, { type: mime });
+
+      // Decode audio and calculate peak and RMS to detect silence / VM dummy device
+      let isSilence = false;
+      try {
+        const arrayBuffer = await audioBlob.arrayBuffer();
+        const decodedBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+        const channelData = decodedBuffer.getChannelData(0);
+        let maxPeak = 0;
+        let sumSq = 0;
+        for (let i = 0; i < channelData.length; i++) {
+          const absVal = Math.abs(channelData[i]);
+          if (absVal > maxPeak) maxPeak = absVal;
+          sumSq += absVal * absVal;
+        }
+        const rms = Math.sqrt(sumSq / channelData.length);
+        if (maxPeak < 0.015 || rms < 0.002) {
+          isSilence = true;
+        }
+      } catch (decErr) {
+        console.warn("Análisis de buffer de audio omitido:", decErr);
+      }
+
+      if (isSilence) {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerText = "Grabar 3s y escuchar";
+        }
+        if (statusEl) {
+          statusEl.innerText = "No se detectó audio (micrófono mudo o sin señal)";
+          statusEl.style.color = "var(--danger-red)";
+        }
+        unmarkCheckpassed("chk-mic", "Micrófono");
+        return;
+      }
+
+      if (btn) btn.innerText = "Reproduciendo...";
+      if (statusEl) {
+        statusEl.innerText = "Reproduciendo audio grabado...";
+        statusEl.style.color = "var(--success-green)";
+      }
+
       const audioUrl = URL.createObjectURL(audioBlob);
       const audio = new Audio(audioUrl);
       audio.volume = 1.0;
@@ -444,14 +480,14 @@ async function recordAndPlayMic() {
           btn.innerText = "Grabar 3s y escuchar";
         }
         if (statusEl) {
-          statusEl.innerText = "Prueba de eco finalizada con éxito";
+          statusEl.innerText = "Prueba de audio completada";
           statusEl.style.color = "var(--success-green)";
         }
         markCheckpassed("chk-mic", "MICRÓFONO");
         URL.revokeObjectURL(audioUrl);
       };
 
-      audio.onerror = (e) => {
+      audio.onerror = () => {
         if (btn) {
           btn.disabled = false;
           btn.innerText = "Grabar 3s y escuchar";
@@ -460,6 +496,7 @@ async function recordAndPlayMic() {
           statusEl.innerText = "Error reproduciendo audio grabado";
           statusEl.style.color = "var(--danger-red)";
         }
+        unmarkCheckpassed("chk-mic", "Micrófono");
         URL.revokeObjectURL(audioUrl);
       };
 
@@ -472,6 +509,7 @@ async function recordAndPlayMic() {
           statusEl.innerText = `Error al reproducir: ${e.message}`;
           statusEl.style.color = "var(--danger-red)";
         }
+        unmarkCheckpassed("chk-mic", "Micrófono");
       });
     };
 

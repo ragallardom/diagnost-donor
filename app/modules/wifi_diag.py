@@ -1,13 +1,95 @@
 #!/usr/bin/env python3
 """
-Wi-Fi Diagnostic Module
-Scans Wi-Fi networks, checks Wi-Fi hardware adapter status, and test network latency (ping).
-Uses nmcli (NetworkManager) or wireless sysfs interfaces.
+Network Diagnostic Module (Wi-Fi & Ethernet)
+Scans Wi-Fi networks, checks Ethernet physical port & cable link status,
+and tests network latency (ping).
 """
 
+import os
 import subprocess
 import shutil
 import re
+
+
+def get_ethernet_status():
+    eth_interfaces = []
+    if os.path.exists("/sys/class/net"):
+        for dev in sorted(os.listdir("/sys/class/net")):
+            if dev == "lo" or dev.startswith(("wl", "docker", "veth", "virbr", "tun", "tap", "br-")):
+                continue
+            dev_path = f"/sys/class/net/{dev}"
+            # Check if wireless
+            if os.path.exists(f"{dev_path}/wireless") or os.path.exists(f"{dev_path}/phy80211"):
+                continue
+
+            # Bring interface UP so carrier sensing is active
+            try:
+                subprocess.run(['ip', 'link', 'set', dev, 'up'], capture_output=True, timeout=1)
+            except Exception:
+                pass
+
+            is_physical = os.path.exists(f"{dev_path}/device")
+            carrier_file = f"{dev_path}/carrier"
+            speed_file = f"{dev_path}/speed"
+            oper_file = f"{dev_path}/operstate"
+            addr_file = f"{dev_path}/address"
+
+            carrier = False
+            if os.path.exists(carrier_file):
+                try:
+                    with open(carrier_file, "r") as f:
+                        carrier = (f.read().strip() == "1")
+                except Exception:
+                    carrier = False
+
+            speed = 0
+            if os.path.exists(speed_file):
+                try:
+                    with open(speed_file, "r") as f:
+                        s_val = int(f.read().strip())
+                        if s_val > 0:
+                            speed = s_val
+                except Exception:
+                    pass
+
+            operstate = "unknown"
+            if os.path.exists(oper_file):
+                try:
+                    with open(oper_file, "r") as f:
+                        operstate = f.read().strip()
+                except Exception:
+                    pass
+
+            mac = ""
+            if os.path.exists(addr_file):
+                try:
+                    with open(addr_file, "r") as f:
+                        mac = f.read().strip()
+                except Exception:
+                    pass
+
+            cable_connected = carrier or operstate == "up"
+
+            eth_interfaces.append({
+                "interface": dev,
+                "is_physical": is_physical,
+                "cable_connected": cable_connected,
+                "operstate": operstate,
+                "speed_mbps": speed,
+                "mac": mac
+            })
+
+    present = len(eth_interfaces) > 0
+    connected = any(i["cable_connected"] for i in eth_interfaces)
+
+    return {
+        "present": present,
+        "connected": connected,
+        "interfaces": eth_interfaces,
+        "primary": eth_interfaces[0] if eth_interfaces else None,
+        "status_label": "Cable conectado OK" if connected else ("Cable desconectado" if present else "Sin puerto Ethernet integrado")
+    }
+
 
 def get_wifi_status():
     has_nmcli = shutil.which('nmcli') is not None
@@ -19,7 +101,6 @@ def get_wifi_status():
 
     # Check physical Wi-Fi hardware interfaces via sysfs, rfkill, lspci or nmcli
     try:
-        import os
         if os.path.exists('/sys/class/net'):
             net_devs = os.listdir('/sys/class/net')
             for d in net_devs:
@@ -40,7 +121,6 @@ def get_wifi_status():
                 except Exception:
                     pass
         if not hardware_present:
-            # Check lspci / lsusb for Wi-Fi hardware controller presence
             try:
                 pci_res = subprocess.run(['lspci'], capture_output=True, text=True, timeout=1)
                 if pci_res.returncode == 0 and any(w in pci_res.stdout.lower() for w in ['network controller', 'wireless', 'wi-fi', 'be200', 'ax211', 'ath12k', 'mt7921', 'mt7922', 'mt7925', 'rtw89']):
@@ -52,7 +132,6 @@ def get_wifi_status():
 
     if has_nmcli:
         try:
-            # Check wifi radio status
             res = subprocess.run(['nmcli', 'radio', 'wifi'], capture_output=True, text=True, timeout=3)
             wifi_enabled = 'enabled' in res.stdout.lower()
 
@@ -60,10 +139,8 @@ def get_wifi_status():
                 subprocess.run(['nmcli', 'radio', 'wifi', 'on'], capture_output=True, timeout=3)
                 wifi_enabled = True
 
-            # Query available networks
             res_conn = subprocess.run(['nmcli', '-t', '-f', 'ACTIVE,SSID,SIGNAL,DEVICE', 'dev', 'wifi'], capture_output=True, text=True, timeout=5)
             
-            # If no networks were returned, trigger an explicit rescan and try once more
             if res_conn.returncode != 0 or not res_conn.stdout.strip():
                 subprocess.run(['nmcli', 'dev', 'wifi', 'rescan'], capture_output=True, timeout=5)
                 res_conn = subprocess.run(['nmcli', '-t', '-f', 'ACTIVE,SSID,SIGNAL,DEVICE', 'dev', 'wifi'], capture_output=True, text=True, timeout=5)
@@ -117,9 +194,12 @@ def get_wifi_status():
         'internet_ping_ok': ping_ok,
         'ping_ms': ping_ms,
         'networks_count': len(networks),
-        'nearby_networks': networks[:10] # Top 10 SSIDs
+        'nearby_networks': networks[:10],
+        'ethernet': get_ethernet_status()
     }
+
 
 if __name__ == '__main__':
     import json
     print(json.dumps(get_wifi_status(), indent=2))
+

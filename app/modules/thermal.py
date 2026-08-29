@@ -10,41 +10,21 @@ import glob
 import subprocess
 
 def get_thermal_and_fans():
-    temperatures = []
+    cpu_temps = []
+    other_temps = []
     fans = []
     seen_labels = set()
 
-    # 1. Read thermal zones (/sys/class/thermal/thermal_zone*)
-    tz_paths = sorted(glob.glob('/sys/class/thermal/thermal_zone*'))
-    for tz in tz_paths:
-        type_file = os.path.join(tz, 'type')
-        temp_file = os.path.join(tz, 'temp')
-        
-        label = "Zona Térmica CPU"
-        if os.path.exists(type_file):
-            try:
-                with open(type_file, 'r') as f:
-                    label = f.read().strip()
-            except Exception:
-                pass
+    def get_status_label(temp_c):
+        if temp_c < 75.0:
+            return 'Normal'
+        if temp_c < 92.0:
+            return 'Carga / Estable'
+        if temp_c < 100.0:
+            return 'Caliente (Turbo)'
+        return 'Límite Térmico'
 
-        if os.path.exists(temp_file):
-            try:
-                with open(temp_file, 'r') as f:
-                    val_raw = int(f.read().strip())
-                    # Convert milli-Celsius or Celsius
-                    temp_c = round(val_raw / 1000.0, 1) if val_raw > 1000 else float(val_raw)
-                    if 10.0 <= temp_c <= 115.0 and label not in seen_labels:
-                        seen_labels.add(label)
-                        temperatures.append({
-                            'label': f"CPU/Sensor ({label})",
-                            'temp_c': temp_c,
-                            'status': 'Normal' if temp_c < 75 else ('Caliente' if temp_c < 90 else 'CRÍTICO')
-                        })
-            except Exception:
-                pass
-
-    # 2. Read hwmon devices (/sys/class/hwmon/hwmon*)
+    # 1. Read hwmon devices (/sys/class/hwmon/hwmon*) with driver classification
     hwmon_paths = sorted(glob.glob('/sys/class/hwmon/hwmon*'))
     for hwpath in hwmon_paths:
         name_path = os.path.join(hwpath, 'name')
@@ -56,6 +36,14 @@ def get_thermal_and_fans():
             except Exception:
                 pass
 
+        hw_lower = hw_name.lower()
+        is_cpu = any(k in hw_lower for k in ["coretemp", "k10temp", "zenpower", "cpu_thermal", "soc_dts"])
+        is_gpu = any(k in hw_lower for k in ["amdgpu", "nouveau", "nvidia", "i915", "xe"])
+        is_ignored = any(k in hw_lower for k in ["bat", "ac0", "ucsi"])
+
+        if is_ignored:
+            continue
+
         # Temperature inputs
         temp_inputs = sorted(glob.glob(os.path.join(hwpath, 'temp*_input')))
         for tinput in temp_inputs:
@@ -64,20 +52,28 @@ def get_thermal_and_fans():
             if os.path.exists(label_file):
                 try:
                     with open(label_file, 'r') as f:
-                        tname = f"{hw_name} ({f.read().strip()})"
+                        lbl_txt = f.read().strip()
+                        tname = f"{hw_name} ({lbl_txt})"
                 except Exception:
                     pass
+
             try:
                 with open(tinput, 'r') as f:
                     temp_milli = int(f.read().strip())
                     temp_c = round(temp_milli / 1000.0, 1)
-                    if 10.0 <= temp_c <= 115.0 and tname not in seen_labels:
+                    if 10.0 <= temp_c <= 120.0 and tname not in seen_labels:
                         seen_labels.add(tname)
-                        temperatures.append({
+                        item = {
                             'label': tname,
                             'temp_c': temp_c,
-                            'status': 'Normal' if temp_c < 75 else ('Caliente' if temp_c < 90 else 'CRÍTICO')
-                        })
+                            'status': get_status_label(temp_c)
+                        }
+                        if is_cpu or "Package" in tname or "Tctl" in tname or "Tdie" in tname:
+                            cpu_temps.append(item)
+                        elif is_gpu or "edge" in tname or "junction" in tname:
+                            cpu_temps.append(item)
+                        else:
+                            other_temps.append(item)
             except Exception:
                 pass
 
@@ -100,6 +96,43 @@ def get_thermal_and_fans():
                         'rpm': rpm,
                         'status': 'Girando OK' if rpm > 0 else 'Inactivo / Detenido'
                     })
+            except Exception:
+                pass
+
+    # 2. Read thermal zones (/sys/class/thermal/thermal_zone*)
+    tz_paths = sorted(glob.glob('/sys/class/thermal/thermal_zone*'))
+    for tz in tz_paths:
+        type_file = os.path.join(tz, 'type')
+        temp_file = os.path.join(tz, 'temp')
+
+        label = "Zona Térmica"
+        if os.path.exists(type_file):
+            try:
+                with open(type_file, 'r') as f:
+                    label = f.read().strip()
+            except Exception:
+                pass
+
+        if any(ign in label.lower() for ign in ["bat", "wifi", "iwlwifi"]):
+            continue
+
+        if os.path.exists(temp_file):
+            try:
+                with open(temp_file, 'r') as f:
+                    val_raw = int(f.read().strip())
+                    temp_c = round(val_raw / 1000.0, 1) if val_raw > 1000 else float(val_raw)
+                    disp_label = f"CPU/Sensor ({label})"
+                    if 10.0 <= temp_c <= 120.0 and disp_label not in seen_labels:
+                        seen_labels.add(disp_label)
+                        item = {
+                            'label': disp_label,
+                            'temp_c': temp_c,
+                            'status': get_status_label(temp_c)
+                        }
+                        if any(k in label.lower() for k in ["pkg", "cpu", "core", "x86"]):
+                            cpu_temps.append(item)
+                        else:
+                            other_temps.append(item)
             except Exception:
                 pass
 
@@ -128,16 +161,16 @@ def get_thermal_and_fans():
             'status': 'Girando OK (Control Automático BIOS)'
         })
 
-    # Default fallback if no temperatures found
-    if not temperatures:
-        temperatures.append({
+    all_temperatures = cpu_temps + other_temps
+    if not all_temperatures:
+        all_temperatures.append({
             'label': 'CPU Core Sensor',
             'temp_c': 45.0,
             'status': 'Normal'
         })
 
     return {
-        'temperatures': temperatures[:6], # Top 6 sensors
+        'temperatures': all_temperatures[:6],  # Top 6 prioritized sensors
         'fans': fans
     }
 

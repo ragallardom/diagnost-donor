@@ -47,6 +47,7 @@ class HardwareStressRunner:
             "medium": {"cpu": 120, "ram": 120, "ssd": 60,  "gpu": 60},
             "deep":   {"cpu": 300, "ram": 300, "ssd": 180, "gpu": 180},
         }
+        self.critical_temp_counter = 0
         level_dur = durations_per_component.get(self.level, durations_per_component["quick"])
         self.durations = {c: level_dur.get(c, 45) for c in self.components}
         self.total_duration_sec = sum(self.durations.values())
@@ -63,42 +64,85 @@ class HardwareStressRunner:
             self.logs.pop(0)
 
     def get_cpu_temp(self):
-        """Read maximum CPU temperature across thermal zones and hwmon."""
-        temps = []
+        """Read true CPU temperature with dedicated hardware sensor priority."""
+        cpu_temps = []
+        fallback_temps = []
         try:
-            # Check thermal zones
-            tz_dir = "/sys/class/thermal"
-            if os.path.exists(tz_dir):
-                for tz in os.listdir(tz_dir):
-                    if tz.startswith("thermal_zone"):
-                        path = os.path.join(tz_dir, tz, "temp")
-                        if os.path.isfile(path):
-                            try:
-                                with open(path, "r") as f:
-                                    t = float(f.read().strip()) / 1000.0
-                                    if 15.0 <= t <= 125.0:
-                                        temps.append(t)
-                            except Exception:
-                                pass
-
-            # Check hwmon
+            # 1. Check hwmon with driver priority (coretemp for Intel, k10temp/zenpower for AMD)
             hw_dir = "/sys/class/hwmon"
             if os.path.exists(hw_dir):
                 for hw in os.listdir(hw_dir):
                     hw_path = os.path.join(hw_dir, hw)
+                    if not os.path.isdir(hw_path):
+                        continue
+
+                    name_file = os.path.join(hw_path, "name")
+                    driver_name = ""
+                    if os.path.exists(name_file):
+                        try:
+                            with open(name_file, "r") as nf:
+                                driver_name = nf.read().strip().lower()
+                        except Exception:
+                            pass
+
+                    # Ignore peripheral sensors (storage NVMe, battery, wifi, usb-c)
+                    if any(ign in driver_name for ign in ["nvme", "bat", "iwlwifi", "mt79", "ath", "ucsi", "ac0"]):
+                        continue
+
+                    is_cpu_driver = any(cpu_drv in driver_name for cpu_drv in ["coretemp", "k10temp", "zenpower", "cpu_thermal", "soc_dts"])
+
                     for f in os.listdir(hw_path):
                         if f.startswith("temp") and f.endswith("_input"):
                             try:
                                 with open(os.path.join(hw_path, f), "r") as tf:
                                     t = float(tf.read().strip()) / 1000.0
-                                    if 15.0 <= t <= 125.0:
-                                        temps.append(t)
+                                    if 15.0 <= t <= 120.0:
+                                        if is_cpu_driver:
+                                            cpu_temps.append(t)
+                                        else:
+                                            fallback_temps.append(t)
+                            except Exception:
+                                pass
+
+            # 2. Check thermal zones
+            tz_dir = "/sys/class/thermal"
+            if os.path.exists(tz_dir):
+                for tz in os.listdir(tz_dir):
+                    if tz.startswith("thermal_zone"):
+                        tz_path = os.path.join(tz_dir, tz)
+                        type_file = os.path.join(tz_path, "type")
+                        temp_file = os.path.join(tz_path, "temp")
+
+                        tz_type = ""
+                        if os.path.exists(type_file):
+                            try:
+                                with open(type_file, "r") as tf:
+                                    tz_type = tf.read().strip().lower()
+                            except Exception:
+                                pass
+
+                        if any(ign in tz_type for ign in ["nvme", "bat", "iwlwifi", "wifi"]):
+                            continue
+
+                        if os.path.isfile(temp_file):
+                            try:
+                                with open(temp_file, "r") as f:
+                                    t = float(f.read().strip()) / 1000.0
+                                    if 15.0 <= t <= 120.0:
+                                        if any(cpu_k in tz_type for cpu_k in ["pkg", "core", "cpu", "x86"]):
+                                            cpu_temps.append(t)
+                                        else:
+                                            fallback_temps.append(t)
                             except Exception:
                                 pass
         except Exception:
             pass
 
-        return max(temps) if temps else 45.0
+        if cpu_temps:
+            return max(cpu_temps)
+        if fallback_temps:
+            return max(fallback_temps)
+        return 45.0
 
     def check_thermal_safety(self):
         """Returns False if critical temperature is reached."""
@@ -106,10 +150,24 @@ class HardwareStressRunner:
         if current_temp > self.max_temp_c:
             self.max_temp_c = current_temp
 
-        if current_temp >= 95.0:
-            self.log(f"[ALERTA CRITICA] Temperatura de CPU a {current_temp:.1f}°C (Limite 95°C). Abortando por seguridad.", "error")
+        # 1. Hard emergency threshold (above safe TjMax for Intel/AMD mobile silicon)
+        if current_temp >= 104.0:
+            self.log(f"[ALERTA CRITICA] Temperatura de CPU a {current_temp:.1f}°C (Excede limite maximo de 104°C). Abortando por proteccion.", "error")
             self.aborted = True
             return False
+
+        # 2. Sustained critical heat protection (if >= 100°C for 4+ consecutive seconds)
+        if current_temp >= 100.0:
+            self.critical_temp_counter += 1
+            if self.critical_temp_counter >= 4:
+                self.log(f"[ALERTA CRITICA] Temperatura de CPU sostenida a {current_temp:.1f}°C durante mas de 4s. Abortando por seguridad.", "error")
+                self.aborted = True
+                return False
+            else:
+                self.log(f"[AVISO TERMICO] CPU a {current_temp:.1f}°C (Pico de Turbo Boost). Ventiladores respondiendo...", "warning")
+        else:
+            self.critical_temp_counter = 0
+
         return True
 
     def start(self):
@@ -233,7 +291,7 @@ class HardwareStressRunner:
         for t in threads:
             t.join(timeout=0.5)
 
-        passed = not self.aborted and max_seen_temp < 95.0
+        passed = not self.aborted and max_seen_temp < 104.0
         self.results["cpu"] = {
             "passed": passed,
             "cores_tested": num_cpus,

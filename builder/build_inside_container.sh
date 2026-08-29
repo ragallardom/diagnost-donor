@@ -118,6 +118,7 @@ lb config \
   --iso-volume "$VOL_ID" \
   --memtest none \
   --initramfs initramfs-tools \
+  --bootappend-live "boot=live toram live-media-path=/live scan-delay=1 rootdelay=1 username=root quiet splash fastboot loglevel=0 console=tty2 vt.global_cursor_default=0 systemd.show_status=false rd.udev.log_level=0 modprobe.blacklist=nvidia_gpu drm.kms_helper.poll=1 xe.force_probe=* i915.force_probe=*" \
   --apt-secure false \
   --apt-options "--yes --no-install-recommends -o Dpkg::Options::=--force-confnew"
 
@@ -212,6 +213,9 @@ psmisc
 stress-ng
 memtester
 fio
+# Bluetooth & Wireless OBEX Sharing
+bluez
+bluez-obexd
 PKGEOF
 
 # ── 4b. Instalar Google Chrome y paquetes desde Aplicaciones/ ──
@@ -663,7 +667,7 @@ PROMPT 0
 LABEL live
   MENU LABEL Start Diagnost-Donor Live
   KERNEL $VMLINUZ_REL
-  APPEND initrd=$INITRD_REL boot=live live-media-path=/live scan-delay=1 rootdelay=1 username=root quiet splash fastboot loglevel=0 console=tty2 vt.global_cursor_default=0 systemd.show_status=false rd.udev.log_level=0 modprobe.blacklist=nvidia_gpu drm.kms_helper.poll=1 xe.force_probe=* i915.force_probe=*
+  APPEND initrd=$INITRD_REL boot=live toram live-media-path=/live scan-delay=1 rootdelay=1 username=root quiet splash fastboot loglevel=0 console=tty2 vt.global_cursor_default=0 systemd.show_status=false rd.udev.log_level=0 modprobe.blacklist=nvidia_gpu drm.kms_helper.poll=1 xe.force_probe=* i915.force_probe=*
 SYSEOF
 
 if [ -f "$BINARY_DIR/isolinux/isolinux.bin" ]; then
@@ -719,7 +723,7 @@ insmod all_video
 insmod gfxterm
 
 menuentry "Diagnost-Donor Live (v$NEW_VERSION)" {
-    linux $VMLINUZ_REL boot=live live-media-path=/live scan-delay=1 rootdelay=1 username=root quiet splash fastboot loglevel=0 console=tty2 vt.global_cursor_default=0 systemd.show_status=false rd.udev.log_level=0 modprobe.blacklist=nvidia_gpu drm.kms_helper.poll=1 xe.force_probe=* i915.force_probe=*
+    linux $VMLINUZ_REL boot=live toram live-media-path=/live scan-delay=1 rootdelay=1 username=root quiet splash fastboot loglevel=0 console=tty2 vt.global_cursor_default=0 systemd.show_status=false rd.udev.log_level=0 modprobe.blacklist=nvidia_gpu drm.kms_helper.poll=1 xe.force_probe=* i915.force_probe=*
     initrd $INITRD_REL
 }
 

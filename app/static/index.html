@@ -12,6 +12,7 @@
     href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700;800&display=swap"
     rel="stylesheet">
   <script src="vendor/jsQR.min.js"></script>
+  <script src="vendor/zxing.min.js"></script>
 </head>
 
 <body class="stealth-purple-theme">
@@ -22,7 +23,7 @@
       <div class="status-dot online"></div>
       <h1>DIAGNOST-DONOR</h1>
       <span
-        style="font-size: 0.75rem; color: #ffffff; font-weight: 500; font-family: var(--font-mono); margin-left: 2px;">v1.1.6</span>
+        style="font-size: 0.75rem; color: #ffffff; font-weight: 500; font-family: var(--font-mono); margin-left: 2px;">v1.1.11</span>
       <span class="badge-purple" id="header-serial">S/N: Detectando...</span>
     </div>
     <div class="system-quick-stats">
@@ -61,6 +62,7 @@
       <a href="#sec-av" class="chk-pill" id="chk-audio">Parlantes</a>
       <a href="#sec-av" class="chk-pill" id="chk-mic">Micrófono</a>
       <a href="#sec-wifi" class="chk-pill" id="chk-wifi">Wi-Fi</a>
+      <a href="#sec-wifi" class="chk-pill" id="chk-eth">Ethernet</a>
     </div>
   </div>
 
@@ -355,32 +357,56 @@
       </div>
     </section>
 
-    <!-- SECTION 4: WIFI Y RED -->
+    <!-- SECTION 4: CONECTIVIDAD DE RED (WI-FI Y ETHERNET) -->
     <section id="sec-wifi" class="qa-section">
       <div class="section-title">
-        <h2>Conectividad Wi-Fi</h2>
+        <h2>Conectividad de red (Wi-Fi y Ethernet)</h2>
       </div>
 
-      <div class="card wifi-card">
-        <div class="wifi-header-status">
-          <p>Estado de redes: <strong id="wifi-auto-status" class="highlight-purple">Escaneando Wi-Fi...</strong></p>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.25rem;">
+        <!-- CARD 1: ETHERNET RJ45 -->
+        <div class="card" id="card-ethernet">
+          <div class="card-header">
+            <span class="spec-label">Puerto Ethernet (RJ-45)</span>
+          </div>
+          <div id="ethernet-details" style="display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.5rem;">
+            <div class="card-spec-item">
+              <span class="spec-label">Estado del puerto</span>
+              <div class="spec-value spec-value-detail" id="eth-status-text" style="color: var(--text-muted);">Comprobando...</div>
+            </div>
+            <div class="card-spec-item">
+              <span class="spec-label">Interfaz de red</span>
+              <div class="spec-value spec-value-detail" id="eth-iface-text"><code>--</code></div>
+            </div>
+            <div class="card-spec-item">
+              <span class="spec-label">Enlace físico / Cable</span>
+              <div class="spec-value spec-value-detail" id="eth-carrier-text">--</div>
+            </div>
+          </div>
         </div>
 
-        <h4>Redes Wi-Fi detectadas cercanas:</h4>
-        <div class="networks-table-wrapper">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Nombre de red (SSID)</th>
-                <th>Señal (%)</th>
-              </tr>
-            </thead>
-            <tbody id="wifi-networks-list">
-              <tr>
-                <td colspan="2">Buscando redes cercanas...</td>
-              </tr>
-            </tbody>
-          </table>
+        <!-- CARD 2: WI-FI -->
+        <div class="card wifi-card">
+          <div class="wifi-header-status">
+            <p>Estado Wi-Fi: <strong id="wifi-auto-status" class="highlight-purple">Escaneando Wi-Fi...</strong></p>
+          </div>
+
+          <h4 style="margin-top: 0.5rem;">Redes Wi-Fi detectadas cercanas:</h4>
+          <div class="networks-table-wrapper">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Nombre de red (SSID)</th>
+                  <th>Señal (%)</th>
+                </tr>
+              </thead>
+              <tbody id="wifi-networks-list">
+                <tr>
+                  <td colspan="2">Buscando redes cercanas...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </section>
@@ -403,31 +429,83 @@
                 objetivo:</strong></label>
             <button type="button" class="btn btn-secondary btn-sm" onclick="fetchOpalDrives()"
               title="Actualizar lista de discos"
-              style="padding: 0.2rem 0.55rem; font-size: 0.75rem; border-radius: 4px;">🔄 Refrescar discos</button>
+              style="padding: 0.2rem 0.55rem; font-size: 0.75rem; border-radius: 4px;">Refrescar discos</button>
           </div>
-          <select id="opal-drive-select" class="form-control">
+          <select id="opal-drive-select" class="form-control" onchange="handleDriveSelectionChange()">
             <option value="/dev/nvme0n1">/dev/nvme0n1 (SSD NVMe Principal)</option>
           </select>
         </div>
 
+        <!-- NVME CRYPTO ERASE BYPASS OPTION (SIN PSID) -->
+        <div id="nvme-crypto-bypass-card" style="background: rgba(99, 102, 241, 0.08); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: 8px; padding: 0.75rem 0.9rem; margin-top: 0.85rem; margin-bottom: 0.5rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem; flex-wrap: wrap; gap: 0.4rem;">
+            <div style="font-weight: 700; font-size: 0.85rem; color: #c7d2fe;">Bypass NVMe: Borrado Criptográfico (Sin PSID)</div>
+            <span id="nvme-crypto-cap-badge" style="font-size: 0.72rem; color: #a5b4fc; font-family: var(--font-mono); font-weight: 600;">Sanitize / SES-2</span>
+          </div>
+          <p style="font-size: 0.76rem; color: var(--text-muted); margin-bottom: 0.6rem; line-height: 1.35;">
+            Permite resetear la clave criptográfica del controlador y desbloquear la unidad directamente sin abrir el equipo ni ingresar el código PSID.
+          </p>
+          <button type="button" class="btn btn-secondary btn-sm" id="btn-nvme-crypto-erase" onclick="submitNvmeCryptoErase()" style="width: 100%; border-color: rgba(99, 102, 241, 0.5); color: #e0e7ff; font-weight: 600; padding: 0.45rem;">
+            Ejecutar Borrado Criptográfico NVMe
+          </button>
+        </div>
+
+        <div style="text-align: center; margin: 0.85rem 0 0.4rem 0; color: var(--text-muted); font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">
+          --- O ingresa el código PSID de la etiqueta ---
+        </div>
+
         <!-- WEBCAM SCANNER PREVIEW -->
-        <div class="form-group" style="margin-top: 1rem;">
-          <label><strong>2. Escáner QR de PSID por cámara web:</strong></label>
-          <div class="qr-camera-container">
+        <div class="form-group" style="margin-top: 0.75rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+            <label style="margin-bottom: 0;"><strong>2. Escáner QR de PSID por cámara web</strong></label>
+          </div>
+          <div class="qr-camera-container" id="qr-cam-container">
             <video id="qr-scanner-video" autoplay playsinline muted></video>
             <canvas id="qr-canvas" style="display: none;"></canvas>
-            <div id="qr-scan-status-overlay" class="camera-overlay">Iniciando escáner cámara web...</div>
+            <div class="qr-viewfinder-overlay" id="qr-viewfinder">
+              <div class="qr-target-box" id="qr-target-reticle">
+                <div class="qr-laser-line"></div>
+              </div>
+              <div class="qr-hint-pill" id="qr-hint-badge">Centra el código QR a 15-20 cm de la cámara</div>
+            </div>
+            <div id="qr-scan-status-overlay" class="camera-overlay">Iniciando cámara web...</div>
           </div>
-          <div style="margin-top: 0.4rem; display: flex; gap: 0.5rem;">
-            <button type="button" class="btn btn-secondary btn-sm" onclick="startQrScanner()">Reactivar cámara</button>
-            <button type="button" class="btn btn-secondary btn-sm" onclick="stopQrScanner()">Detener cámara</button>
+          <div
+            style="margin-top: 0.4rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.4rem;">
+            <div style="display: flex; gap: 0.5rem;">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="startQrScanner()">Reactivar
+                cámara</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="stopQrScanner()">Detener cámara</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- BLUETOOTH WIRELESS RECEIVER (ANDROID SHARE / OBEX) -->
+        <div class="form-group" style="margin-top: 1rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
+            <label style="margin-bottom: 0;"><strong>3. Envío directo por Bluetooth Android</strong></label>
+          </div>
+          <div
+            style="background: #06060c; border: 1px solid rgba(168, 85, 247, 0.3); border-radius: 8px; padding: 0.75rem 0.9rem;">
+            <div
+              style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.4rem; flex-wrap: wrap; gap: 0.3rem;">
+              <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <span class="status-dot online" id="bt-receiver-dot" style="width: 8px; height: 8px;"></span>
+                <span id="bt-receiver-status-text"
+                  style="font-size: 0.8rem; color: var(--text-main); font-weight: 600;">Receptor activo y visible como
+                  "DIAGNOST-DONOR"</span>
+              </div>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="restartBluetoothReceiver()"
+                style="padding: 0.2rem 0.55rem; font-size: 0.72rem; border-radius: 4px;">Hacer visible /
+                Reconectar</button>
+            </div>
           </div>
         </div>
 
         <!-- PSID TEXT INPUT -->
         <div class="form-group" style="margin-top: 1rem;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
-            <label for="opal-psid-input" style="margin-bottom: 0;"><strong>3. Código PSID (32
+            <label for="opal-psid-input" style="margin-bottom: 0;"><strong>4. Código PSID (32
                 caracteres):</strong></label>
             <span id="psid-char-counter"
               style="font-size: 0.8rem; color: var(--text-muted); font-family: var(--font-mono); font-weight: 600;">0 /
@@ -435,16 +513,11 @@
           </div>
           <input type="text" id="opal-psid-input" class="form-control-mono"
             placeholder="Ej: W97C82K19LPX4821N3091LAK92183921" maxlength="32" autocomplete="off" spellcheck="false">
-          <small style="display: block; color: var(--text-muted); font-size: 0.75rem; margin-top: 0.3rem;">
-            💡 El código PSID está impreso en la etiqueta física del disco SSD. Se formateará automáticamente a
-            mayúsculas.
-          </small>
         </div>
 
         <!-- EXECUTE BUTTON & STATUS BANNER -->
         <div style="margin-top: 1.25rem;">
-          <button class="btn btn-block" id="btn-exec-opal" onclick="submitOpalRevert()">Ejecutar desbloqueo de fábrica
-            (PSID Revert)</button>
+          <button class="btn btn-block" id="btn-exec-opal" onclick="submitOpalRevert()">Ejecutar PSID Revert</button>
         </div>
 
         <div id="opal-result-banner" style="margin-top: 1rem;"></div>
@@ -459,6 +532,59 @@
             style="background: #0d0f17; border: 1px solid var(--border-color); border-radius: 6px; padding: 0.65rem; font-size: 0.74rem; color: #a5b4fc; max-height: 140px; overflow-y: auto; font-family: var(--font-mono); white-space: pre-wrap; line-height: 1.4;"></pre>
         </div>
 
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL DE CONFIRMACIÓN: TCG OPAL / PSID REVERT -->
+  <div id="opal-confirm-modal" class="modal-overlay" style="display: none; z-index: 1050;">
+    <div class="modal-content"
+      style="max-width: 490px; border-color: rgba(239, 68, 68, 0.4); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8), 0 0 25px rgba(239, 68, 68, 0.2);">
+      <div class="modal-header"
+        style="background-color: rgba(239, 68, 68, 0.12); border-bottom: 1px solid rgba(239, 68, 68, 0.25);">
+        <h3 style="color: #fca5a5;" id="opal-confirm-title">Confirmar Desbloqueo y Borrado</h3>
+        <button class="modal-close-btn" onclick="closeOpalConfirmModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div
+          style="background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 8px; padding: 0.9rem 1rem; margin-bottom: 1.15rem;">
+          <div
+            style="font-weight: 700; font-size: 0.88rem; color: #f87171; margin-bottom: 0.35rem; text-transform: uppercase; letter-spacing: 0.5px;">
+            Advertencia de Borrado Permanente
+          </div>
+          <p style="font-size: 0.84rem; color: #fecaca; line-height: 1.45; margin: 0;" id="opal-confirm-warning-text">
+            Esta operación ejecutará un reseteo de fábrica por hardware. Se destruirán irreversiblemente
+            todas las particiones, contraseñas de hardware y datos existentes en la unidad.
+          </p>
+        </div>
+
+        <div
+          style="background: #06060c; border: 1px solid var(--border-color); border-radius: 8px; padding: 0.85rem 1rem; margin-bottom: 1.25rem;">
+          <div class="card-spec-item" style="margin-bottom: 0.5rem;">
+            <span class="spec-label">Disco objetivo</span>
+            <div class="spec-value spec-value-detail"
+              style="font-family: var(--font-mono); color: #a5b4fc; font-weight: 700;" id="opal-confirm-device-text">--
+            </div>
+          </div>
+          <div class="card-spec-item" style="margin-bottom: 0.5rem;" id="opal-confirm-psid-row">
+            <span class="spec-label">Código PSID</span>
+            <div class="spec-value spec-value-detail"
+              style="font-family: var(--font-mono); color: var(--success-green); font-weight: 700; word-break: break-all;"
+              id="opal-confirm-psid-text">--</div>
+          </div>
+          <div class="card-spec-item">
+            <span class="spec-label">Acción a realizar</span>
+            <div class="spec-value spec-value-detail" style="color: #e2e8f0;" id="opal-confirm-action-text">Reversión PSID + Creación tabla GPT limpia
+            </div>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 0.75rem; justify-content: flex-end;">
+          <button type="button" class="btn btn-secondary" onclick="closeOpalConfirmModal()">Cancelar</button>
+          <button type="button" class="btn" id="btn-opal-confirm-exec"
+            style="background-color: var(--danger-red); border-color: var(--danger-red);"
+            onclick="executeOpalConfirmAction()">Confirmar y Ejecutar</button>
+        </div>
       </div>
     </div>
   </div>

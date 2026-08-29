@@ -2,7 +2,7 @@
 
 Suite de diagnóstico y control de calidad de hardware para laptops basada en una distribución Linux Live (Ubuntu 24.04 LTS).
 
-El sistema arranca de forma autónoma desde un pendrive USB directamente a una interfaz web en modo Kiosk, comunicada con un backend local en Python que interactúa con los sensores del kernel (`/sys`, `/proc`, `hwmon`, `DMI`, `sedutil-cli`).
+El sistema arranca de forma autónoma desde un pendrive USB directamente a una interfaz web en modo Kiosk, comunicada con un backend local en Python que interactúa con los sensores del kernel (`/sys`, `/proc`, `hwmon`, `DMI`, `sedutil-cli`, `nvme-cli`, `bluez-obexd`).
 
 Está orientado a pruebas rápidas de hardware en equipos corporativos (Lenovo ThinkPad, HP EliteBook/ZBook, Dell Latitude/Precision, ASUS, entre otros).
 
@@ -13,12 +13,13 @@ Está orientado a pruebas rápidas de hardware en equipos corporativos (Lenovo T
 Si no deseas compilar la imagen desde el código fuente, puedes descargar la ISO lista para grabar:
 
 * **Descargar imagen ISO:** [Carpeta en Google Drive](https://drive.google.com/drive/folders/1OyvIwNIlQrwrBk6csGnisaWAhYtO8NJI?usp=sharing)
-* Versión actual disponible: `diagnost-donor_1.1.6_linux-live.iso`
+* Versión actual disponible: `diagnost-donor_1.1.11_linux-live.iso`
 
 ---
 
-## Requisitos de arranque del equipo
+## Requisitos y características de arranque
 
+* **Carga 100% en RAM (`toram`):** El sistema operativo se copia íntegramente a la memoria RAM durante el inicio, permitiendo desconectar el pendrive USB una vez que la interfaz principal haya cargado.
 * **Arranque UEFI nativo:** La ISO es de tipo híbrida (ISO-Hybrid) con partición EFI firmada. No requiere Ventoy ni gestores intermedios; se graba directamente al pendrive.
 * **Secure Boot y TPM 2.0 activos:** Por política de seguridad, el sistema verifica al iniciar que tanto Secure Boot como TPM 2.0 estén habilitados en la BIOS. Si alguno está desactivado, el script de inicio mostrará una advertencia y reiniciará el equipo tras 10 segundos.
 
@@ -69,14 +70,21 @@ wget -O Aplicaciones/google-chrome-stable_current_amd64.deb https://dl.google.co
 * Detección de anomalías en el cargador (alerta si el cargador está conectado pero no ingresa corriente).
 
 ### Temperaturas y ventilación
-* Sensores de temperatura de CPU y zonas térmicas (`coretemp`, `k10temp`, `acpitz`).
-* Lectura de RPM de ventiladores (soporte para Lenovo ThinkPad ACPI y HP WMI).
+* Sensores térmicos dedicados de silicio (`coretemp` para Intel, `k10temp`/`zenpower` para AMD), filtrando sensores periféricos.
+* Lectura de RPM de ventiladores (soporte para Lenovo ThinkPad ACPI, ASUS y HP WMI).
+* Clasificación dinámica en tiempo real: Normal (<75°C), Carga / Estable (<92°C), Caliente / Turbo (<100°C) y Límite Térmico (>=100°C).
 
-### Almacenamiento y desbloqueo SSD
-* Detección de unidades NVMe, SATA y discos USB con lectura de salud SMART.
+### Almacenamiento, diagnóstico LBA y desbloqueo SSD
+* **Pruebas de lectura de bajo nivel (Device Read & NVMe Read Test):**
+  * Ejecuta pruebas no destructivas en LBA 0 y bloques secundarios similares a las de Lenovo UEFI Diagnostics.
+  * Diagnostica automáticamente unidades bloqueadas con hardware encryption (`Disco posiblemente encriptado con OPAL`).
+* **Borrado Criptográfico NVMe (Bypass sin PSID):**
+  * Consulta capacidades de controlador NVMe (`sanicap`, `fna`, `oacs`).
+  * Ejecuta borrado seguro en cascada (`Sanitize Crypto-Erase` -> `Format NVM SES=2` -> `Format NVM SES=1`) con regeneración de tabla GPT limpia, permitiendo reutilizar la unidad sin necesidad de abrir el equipo para leer la etiqueta del disco.
 * **Desbloqueo TCG Opal / PSID Revert:**
-  * Escaneo del código PSID de 32 caracteres mediante la cámara web (código QR o de barras) o ingreso manual.
-  * Reversión de discos bloqueados con `sedutil-cli --PSIDrevert` y borrado criptográfico para NVMe (`nvme format -s 2`).
+  * Escáner QR optimizado para pantallas de teléfonos móviles y cámaras web de baja resolución.
+  * **Receptor Bluetooth Android nativo (OBEX):** Permite emparejar el celular y compartir el código PSID directamente por Bluetooth sin instalar aplicaciones ni usar redes locales.
+  * Reversión de discos bloqueados con `sedutil-cli` y reseteo integral de particiones (`wipefs` + `parted`).
 
 ### Teclado y Touchpad
 * **Teclado:** Matriz visual interactiva de 78 teclas (distribuciones ANSI e ISO). Cada pulsación cambia de color progresivamente (verde, violeta, naranja, azul, amarillo) y contabiliza teclas presionadas sin que el navegador capture los atajos del sistema (`Tab`, `Alt`, `F1-F12`, `Super`).
@@ -85,18 +93,21 @@ wget -O Aplicaciones/google-chrome-stable_current_amd64.deb https://dl.google.co
 ### Multimedia y conectividad
 * **Cámara web:** Vista previa en vivo y detección de resolución máxima soportada.
 * **Audio:** Barrido senoidal estéreo (canal izquierdo, derecho y ambos) con control de volumen del sistema.
-* **Micrófono:** Medidor de nivel (VU meter) en tiempo real con filtro de ruido base y grabador de prueba rápida (loopback de 3 segundos).
-* **Wi-Fi y Bluetooth:** Escaneo de redes inalámbricas cercanas (SSID y nivel de señal), prueba de ping a DNS público (`1.1.1.1`), detección del adaptador Bluetooth y su dirección MAC.
+* **Micrófono con análisis de onda PCM/RMS:** Medidor de nivel (VU meter) en tiempo real y grabador loopback de 3 segundos con comprobación de amplitud para evitar falsos positivos en entornos sin micrófono o máquinas virtuales.
+* **Conectividad de red (Wi-Fi y Ethernet):**
+  * **Wi-Fi:** Escaneo de redes inalámbricas cercanas (SSID y nivel de señal) y prueba de ping a DNS público (`1.1.1.1`).
+  * **Ethernet RJ-45:** Detección de puerto físico y estado del enlace por cable en tiempo real con indicador dinámico en el checklist.
+* **Bluetooth:** Detección del adaptador de radio y su dirección MAC.
 
 ### Prueba de estrés
 * Carga multihilo configurable para CPU, memoria RAM, lecturas/escrituras en SSD y renderizado 3D WebGL.
 * Duraciones: Rápida (~2.5 min), Media (~6 min) o Profunda (~15 min).
-* Monitoreo térmico continuo con parada automática de emergencia si la CPU supera los 95°C.
+* Protección térmica con tolerancia a picos normales de Turbo Boost (PL2) y parada automática de emergencia si la CPU sostiene >=100°C por más de 4 segundos o supera los 104°C.
 
 ### Checklist y control de energía
-* Barra superior fija con el estado de aprobación de cada test.
+* Barra superior fija con el estado de aprobación en mayúsculas de cada test.
 * Botón de reinicio de pruebas para reevaluar componentes rápidamente.
-* Opciones de apagado y reinicio limpio del equipo.
+* Opciones de apagado y reinicio limpio del equipo con modales de confirmación con diseño nativo.
 
 ---
 
@@ -107,18 +118,18 @@ diagnost-donor/
 ├── Aplicaciones/                 # Paquetes .deb locales (Google Chrome necesario para compilar)
 │   └── google-chrome-stable_current_amd64.deb
 ├── app/                          # Aplicación de diagnóstico
-│   ├── modules/                  # Módulos Python (batería, CPU, RAM, discos, wifi, etc.)
+│   ├── modules/                  # Módulos Python (batería, CPU, RAM, discos, wifi, bluetooth, stress, etc.)
 │   ├── server.py                 # Servidor local HTTP REST (puerto 8080)
 │   └── static/                   # Frontend web (HTML, CSS y JS modular)
 │       ├── index.html
 │       ├── style.css
-│       ├── vendor/               # Dependencias offline (jsQR)
+│       ├── vendor/               # Dependencias offline (jsQR, zxing)
 │       └── js/
 ├── builder/                      # Scripts de compilación de la ISO Live
 │   ├── bin/                      # Binarios adicionales (sedutil-cli)
 │   ├── build_live_iso.sh         # Script principal de compilación (ejecuta Docker)
-│   ├── build_inside_container.sh # Configuración de live-build en Ubuntu 24.04
-│   ├── start_qa.sh               # Script de inicio en el entorno Live
+│   ├── build_inside_container.sh # Configuración de live-build en Ubuntu 24.04 (soporte toram)
+│   ├── start_qa.sh               # Script de inicio en el entorno Live con healthcheck
 │   └── VERSION                   # Archivo de control de versión
 ├── ISOs/                         # Directorio donde se guardan las ISOs compiladas
 └── README.md
@@ -148,7 +159,7 @@ cd builder
 sudo ./build_live_iso.sh
 ```
 
-El script incrementa automáticamente el número de versión (ej. de `1.1.6` a `1.1.7`), actualiza la referencia en la interfaz y genera el archivo `.iso` dentro de la carpeta `ISOs/`.
+El script incrementa automáticamente el número de versión, actualiza la referencia en la interfaz y genera el archivo `.iso` dentro de la carpeta `ISOs/`.
 
 ---
 
@@ -156,7 +167,7 @@ El script incrementa automáticamente el número de versión (ej. de `1.1.6` a `
 
 ### Linux (`dd`)
 ```bash
-sudo dd if=ISOs/diagnost-donor_1.1.6_linux-live.iso of=/dev/sdX bs=4M status=progress conv=fsync
+sudo dd if=ISOs/diagnost-donor_1.1.11_linux-live.iso of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 *(Reemplaza `/dev/sdX` por la unidad correspondiente a tu pendrive).*
 

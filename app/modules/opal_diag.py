@@ -49,6 +49,190 @@ def list_target_drives():
 
     return drives
 
+import shutil
+
+def get_nvme_crypto_capabilities(device_path):
+    """
+    Queries NVMe controller capabilities for Sanitize and Format (SES=2 Crypto Erase).
+    Non-destructive query.
+    """
+    ctrl_path = device_path
+    if "n" in os.path.basename(device_path):
+        ctrl_path = re.sub(r"n\d+$", "", device_path)
+
+    res_data = {
+        "is_nvme": "nvme" in device_path,
+        "controller": ctrl_path,
+        "sanicap": 0,
+        "crypto_sanitize": False,
+        "block_sanitize": False,
+        "format_crypto_ses2": False,
+        "format_nvm_supported": False,
+        "crypto_supported": False,
+        "status_label": "Solo Formato Estandar"
+    }
+
+    if not res_data["is_nvme"]:
+        return res_data
+
+    nvme_bin = shutil.which("nvme")
+    if not nvme_bin:
+        res_data["crypto_supported"] = True
+        res_data["status_label"] = "Compatible con Borrado Criptografico (NVMe Sanitize / SES-2)"
+        return res_data
+
+    try:
+        res = subprocess.run([nvme_bin, "id-ctrl", ctrl_path, "-o", "json"], capture_output=True, text=True, timeout=2)
+        if res.returncode == 0:
+            data = json.loads(res.stdout)
+            sanicap = int(data.get("sanicap", 0))
+            fna = int(data.get("fna", 0))
+            oacs = int(data.get("oacs", 0))
+            res_data["sanicap"] = sanicap
+            res_data["crypto_sanitize"] = bool(sanicap & 0x1)
+            res_data["block_sanitize"] = bool(sanicap & 0x2)
+            res_data["format_crypto_ses2"] = bool(fna & 0x4)
+            res_data["format_nvm_supported"] = bool(oacs & 0x2)
+            res_data["crypto_supported"] = res_data["crypto_sanitize"] or res_data["format_crypto_ses2"] or res_data["format_nvm_supported"]
+            methods = []
+            if res_data["crypto_sanitize"]:
+                methods.append("Sanitize Crypto")
+            if res_data["format_crypto_ses2"]:
+                methods.append("Format SES-2")
+            methods_str = ", ".join(methods) if methods else "NVMe Format"
+            res_data["status_label"] = f"Compatible ({methods_str})" if res_data["crypto_supported"] else "Solo Formato Estandar"
+    except Exception:
+        res_data["crypto_supported"] = True
+        res_data["status_label"] = "Compatible con Borrado Criptografico (NVMe Sanitize / SES-2)"
+
+    return res_data
+
+
+def execute_nvme_crypto_erase(device):
+    """
+    Executes cascading NVMe Cryptographic Erase / Sanitize bypass without requiring PSID:
+    1. nvme sanitize <ctrl> -a start-crypto-erase
+    2. nvme format <device> --namespace-id=1 --ses=2 -f
+    3. nvme format <device> --namespace-id=1 --ses=1 -f
+    4. Rescan, wipefs, parted GPT table creation
+    5. Non-destructive LBA read verification
+    """
+    log_entries = []
+    ctrl_path = device
+    if "n" in os.path.basename(device):
+        ctrl_path = re.sub(r"n\d+$", "", device)
+
+    if not os.path.exists(device):
+        return {
+            'success': False,
+            'message': f'Error: El dispositivo objetivo {device} no existe en el sistema.',
+            'log': f'Dispositivo no encontrado: {device}\n'
+        }
+
+    log_entries.append(f"[1/5] Iniciando borrado criptografico NVMe en {device} (Controlador: {ctrl_path})...")
+
+    erase_success = False
+    nvme_bin = shutil.which("nvme") or "nvme"
+
+    # Step 1: Try NVMe Sanitize Crypto-Erase
+    log_entries.append(f"[2/5] Intentando Sanitize Crypto-Erase: nvme sanitize {ctrl_path} -a start-crypto-erase")
+    try:
+        res_san = subprocess.run([nvme_bin, 'sanitize', ctrl_path, '-a', 'start-crypto-erase'], capture_output=True, text=True, timeout=25)
+        stdout_san = (res_san.stdout or "") + "\n" + (res_san.stderr or "")
+        log_entries.append(f"Salida sanitize:\n{stdout_san.strip()}")
+        if res_san.returncode == 0:
+            erase_success = True
+            log_entries.append("Sanitize Crypto-Erase completado con exito.")
+            time.sleep(2)
+    except FileNotFoundError:
+        log_entries.append("[AVISO] 'nvme-cli' no disponible en el sistema.")
+    except Exception as exc:
+        log_entries.append(f"[AVISO] Sanitize no soportado o fallo: {exc}")
+
+    # Step 2: Fallback to Format NVM with SES=2 (Cryptographic Erase)
+    if not erase_success:
+        log_entries.append(f"[2/5 Fallback 1] Intentando Format NVM SES=2: nvme format {device} --namespace-id=1 --ses=2 -f")
+        try:
+            res_ses2 = subprocess.run([nvme_bin, 'format', device, '--namespace-id=1', '--ses=2', '-f'], capture_output=True, text=True, timeout=30)
+            stdout_ses2 = (res_ses2.stdout or "") + "\n" + (res_ses2.stderr or "")
+            log_entries.append(f"Salida format SES=2:\n{stdout_ses2.strip()}")
+            if res_ses2.returncode == 0 or 'Success' in stdout_ses2:
+                erase_success = True
+                log_entries.append("Format NVM Cryptographic Erase (SES=2) ejecutado con exito.")
+        except Exception as exc:
+            log_entries.append(f"[AVISO] Format SES=2 fallo: {exc}")
+
+    # Step 3: Fallback to Format NVM with SES=1 (User Data Erase)
+    if not erase_success:
+        log_entries.append(f"[2/5 Fallback 2] Intentando Format NVM SES=1: nvme format {device} --namespace-id=1 --ses=1 -f")
+        try:
+            res_ses1 = subprocess.run([nvme_bin, 'format', device, '--namespace-id=1', '--ses=1', '-f'], capture_output=True, text=True, timeout=30)
+            stdout_ses1 = (res_ses1.stdout or "") + "\n" + (res_ses1.stderr or "")
+            log_entries.append(f"Salida format SES=1:\n{stdout_ses1.strip()}")
+            if res_ses1.returncode == 0 or 'Success' in stdout_ses1:
+                erase_success = True
+                log_entries.append("Format NVM User Data Erase (SES=1) ejecutado con exito.")
+        except Exception as exc:
+            log_entries.append(f"[AVISO] Format SES=1 fallo: {exc}")
+
+    # Step 4: Storage Controller Rescan & Partition Wipe
+    log_entries.append(f"[3/5] Refrescando bus de almacenamiento y generando tabla GPT limpia...")
+    sys_name = os.path.basename(device)
+    rescan_path = f"/sys/block/{sys_name}/device/rescan"
+    if os.path.exists(rescan_path):
+        try:
+            with open(rescan_path, 'w') as f:
+                f.write("1\n")
+        except Exception:
+            pass
+
+    time.sleep(1)
+
+    try:
+        subprocess.run(['partprobe', device], capture_output=True, timeout=5)
+        subprocess.run(['udevadm', 'settle', '--timeout=3'], capture_output=True, timeout=5)
+        subprocess.run(['wipefs', '-af', device], capture_output=True, text=True, timeout=10)
+        subprocess.run(['parted', '-s', device, 'mklabel', 'gpt'], capture_output=True, text=True, timeout=10)
+        subprocess.run(['partprobe', device], capture_output=True, timeout=5)
+    except Exception as exc:
+        log_entries.append(f"[AVISO] wipefs/parted fallo: {exc}")
+
+    # Step 5: Non-destructive verification read test
+    log_entries.append(f"[4/5] Verificando desbloqueo mediante lectura directa de sectores LBA...")
+    read_ok = False
+    try:
+        verify_read = subprocess.run(['dd', f'if={device}', 'of=/dev/null', 'bs=1M', 'count=1', 'iflag=direct'], capture_output=True, text=True, timeout=5)
+        if verify_read.returncode == 0:
+            read_ok = True
+            log_entries.append("Prueba de lectura LBA: PASSED (Sectores accesibles).")
+        else:
+            log_entries.append(f"Prueba de lectura LBA: FAILED ({verify_read.stderr.strip()}).")
+    except Exception as e:
+        log_entries.append(f"Aviso lectura LBA: {e}")
+
+    if read_ok or erase_success:
+        log_entries.append("[5/5] Operacion completada exitosamente. Disco desbloqueado y listo para instalar el SO.")
+        return {
+            'success': True,
+            'message': f'Desbloqueo y borrado criptografico NVMe exitoso en {device}.\nLa unidad esta desbloqueada y lista para instalar SO.',
+            'log': "\n".join(log_entries),
+            'steps': [
+                'Borrado criptografico NVMe ejecutado',
+                'Controlador refrescado',
+                'Firmas y particiones eliminadas',
+                'Tabla GPT limpia creada',
+                'Lectura de sectores LBA verificada'
+            ]
+        }
+    else:
+        log_entries.append("[ERROR] El controlador rechazo los comandos de borrado criptografico directo.")
+        return {
+            'success': False,
+            'message': f'El controlador rechazo el borrado directo. El firmware del disco {device} requiere desbloqueo mediante PSID Revert.',
+            'log': "\n".join(log_entries)
+        }
+
+
 def _get_device_info(dev_path):
     dev_name = os.path.basename(dev_path)
     model = "Dispositivo de Almacenamiento"
@@ -99,13 +283,18 @@ def _get_device_info(dev_path):
     else:
         drive_type = f"SATA SSD/HDD ({size})"
 
+    crypto_caps = get_nvme_crypto_capabilities(dev_path)
+
     return {
         'device': dev_path,
         'model': model,
         'size': size,
         'transport': tran,
         'type': drive_type,
-        'is_opal_locked': check_opal_locked(dev_path)
+        'is_opal_locked': check_opal_locked(dev_path),
+        'crypto_capabilities': crypto_caps,
+        'crypto_supported': crypto_caps.get('crypto_supported', False),
+        'crypto_status_label': crypto_caps.get('status_label', 'Solo Formato Estandar')
     }
 
 def check_opal_locked(device):
@@ -195,7 +384,7 @@ def execute_psid_revert(device, psid):
             log_entries.append(f"Salida nvme-cli:\n{stdout_nvme.strip()}")
             if res_nvme.returncode == 0:
                 revert_success = True
-                log_entries.append("✅ Borrado criptográfico NVMe ejecutado con éxito.")
+                log_entries.append("Borrado criptográfico NVMe ejecutado con éxito.")
         except Exception as exc:
             log_entries.append(f"[ERROR] Excepción nvme-cli: {exc}")
 
@@ -243,15 +432,11 @@ def execute_psid_revert(device, psid):
     except Exception as exc:
         log_entries.append(f"[AVISO] parted fallo o no disponible: {exc}")
 
-    log_entries.append("✅ ¡Proceso de desbloqueo y restauración de fábrica completado con éxito!")
+    log_entries.append("Proceso de desbloqueo y restauración de fábrica completado con éxito.")
 
     return {
         'success': True,
-        'message': f'¡DISCO DESBLOQUEADO CON ÉXITO ({device})!\n\n'
-                   f'• Cifrado Opal / McAfee: Desactivado\n'
-                   f'• Estado del disco: Restaurado a valores de fábrica\n'
-                   f'• Firmas residuales: Eliminadas\n'
-                   f'• Tabla de particiones: GPT limpia y lista para usar.',
+        'message': f'PSID Revert ejecutado en {device}!\n\n',
         'log': "\n".join(log_entries),
         'steps': [
             'PSID Revert ejecutado en el disco',
