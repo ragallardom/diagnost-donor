@@ -13,14 +13,16 @@ Está orientado a pruebas rápidas de hardware en equipos corporativos (Lenovo T
 Si no deseas compilar la imagen desde el código fuente, puedes descargar la ISO lista para grabar:
 
 * **Descargar imagen ISO:** [Carpeta en Google Drive](https://drive.google.com/drive/folders/1OyvIwNIlQrwrBk6csGnisaWAhYtO8NJI?usp=sharing)
-* Versión actual disponible: `diagnost-donor_1.1.11_linux-live.iso`
+* Versión de referencia: `diagnost-donor_1.1.12_linux-live.iso`
 
 ---
 
 ## Requisitos y características de arranque
 
-* **Carga 100% en RAM (`toram`):** El sistema operativo se copia íntegramente a la memoria RAM durante el inicio, permitiendo desconectar el pendrive USB una vez que la interfaz principal haya cargado.
-* **Arranque UEFI nativo:** La ISO es de tipo híbrida (ISO-Hybrid) con partición EFI firmada. No requiere Ventoy ni gestores intermedios; se graba directamente al pendrive.
+* **Menú de booteo dual:**
+  * **Arranque rápido directo USB (Predeterminado):** Carga el sistema en ~15 segundos montando el sistema de archivos directamente desde el pendrive USB.
+  * **Carga 100% en RAM (`toram`):** Copia íntegramente la imagen a la memoria RAM durante el inicio, permitiendo desconectar el pendrive USB una vez que la interfaz principal haya cargado.
+* **Arranque UEFI y BIOS nativo:** La ISO es de tipo híbrida (ISO-Hybrid) con partición EFI firmada. No requiere Ventoy ni gestores intermedios; se graba directamente al pendrive.
 * **Secure Boot y TPM 2.0 activos:** Por política de seguridad, el sistema verifica al iniciar que tanto Secure Boot como TPM 2.0 estén habilitados en la BIOS. Si alguno está desactivado, el script de inicio mostrará una advertencia y reiniciará el equipo tras 10 segundos.
 
 Teclas habituales para el menú de booteo:
@@ -77,10 +79,7 @@ wget -O Aplicaciones/google-chrome-stable_current_amd64.deb https://dl.google.co
 ### Almacenamiento, diagnóstico LBA y desbloqueo SSD
 * **Pruebas de lectura de bajo nivel (Device Read & NVMe Read Test):**
   * Ejecuta pruebas no destructivas en LBA 0 y bloques secundarios similares a las de Lenovo UEFI Diagnostics.
-  * Diagnostica automáticamente unidades bloqueadas con hardware encryption (`Disco posiblemente encriptado con OPAL`).
-* **Borrado Criptográfico NVMe (Bypass sin PSID):**
-  * Consulta capacidades de controlador NVMe (`sanicap`, `fna`, `oacs`).
-  * Ejecuta borrado seguro en cascada (`Sanitize Crypto-Erase` -> `Format NVM SES=2` -> `Format NVM SES=1`) con regeneración de tabla GPT limpia, permitiendo reutilizar la unidad sin necesidad de abrir el equipo para leer la etiqueta del disco.
+  * Diagnostica automáticamente unidades bloqueadas (`Posible bloqueo por cifrado TCG Opal`).
 * **Desbloqueo TCG Opal / PSID Revert:**
   * Escáner QR optimizado para pantallas de teléfonos móviles y cámaras web de baja resolución.
   * **Receptor Bluetooth Android nativo (OBEX):** Permite emparejar el celular y compartir el código PSID directamente por Bluetooth sin instalar aplicaciones ni usar redes locales.
@@ -96,7 +95,7 @@ wget -O Aplicaciones/google-chrome-stable_current_amd64.deb https://dl.google.co
 * **Micrófono con análisis de onda PCM/RMS:** Medidor de nivel (VU meter) en tiempo real y grabador loopback de 3 segundos con comprobación de amplitud para evitar falsos positivos en entornos sin micrófono o máquinas virtuales.
 * **Conectividad de red (Wi-Fi y Ethernet):**
   * **Wi-Fi:** Escaneo de redes inalámbricas cercanas (SSID y nivel de señal) y prueba de ping a DNS público (`1.1.1.1`).
-  * **Ethernet RJ-45:** Detección de puerto físico y estado del enlace por cable en tiempo real con indicador dinámico en el checklist.
+  * **Ethernet RJ-45:** Detección de puerto físico y validación del enlace por cable. Una vez probado con éxito, la aprobación en el checklist se mantiene fija de forma persistente aunque el técnico desconecte el cable para continuar con otras pruebas.
 * **Bluetooth:** Detección del adaptador de radio y su dirección MAC.
 
 ### Prueba de estrés
@@ -159,7 +158,8 @@ cd builder
 sudo ./build_live_iso.sh
 ```
 
-El script incrementa automáticamente el número de versión, actualiza la referencia en la interfaz y genera el archivo `.iso` dentro de la carpeta `ISOs/`.
+* **Versionado inteligente:** Si la versión definida en el código es mayor a la última ISO existente en `ISOs/`, se compila directamente con esa versión. Si es menor o igual, suma automáticamente `+1` a la última ISO creada.
+* **Seguridad y compatibilidad:** Incluye montaje automático de certificados CA del host para descargas seguras por repositorios HTTPS.
 
 ---
 
@@ -167,7 +167,7 @@ El script incrementa automáticamente el número de versión, actualiza la refer
 
 ### Linux (`dd`)
 ```bash
-sudo dd if=ISOs/diagnost-donor_1.1.11_linux-live.iso of=/dev/sdX bs=4M status=progress conv=fsync
+sudo dd if=ISOs/diagnost-donor_1.1.12_linux-live.iso of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 *(Reemplaza `/dev/sdX` por la unidad correspondiente a tu pendrive).*
 

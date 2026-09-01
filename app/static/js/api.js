@@ -14,6 +14,7 @@ async function refreshAllData() {
     if (typeof resetAudioTest === "function") resetAudioTest();
     if (typeof resetScreenTest === "function") resetScreenTest();
     if (typeof resetHdmiTest === "function") resetHdmiTest();
+    if (typeof resetEthernetTest === "function") resetEthernetTest();
 
     // 2. Fetch fresh hardware data
     const res = await fetch("/api/all");
@@ -194,140 +195,13 @@ function submitOpalRevert() {
   if (confirmModal) confirmModal.style.display = "flex";
 }
 
-function submitNvmeCryptoErase() {
-  const driveSelect = document.getElementById("opal-drive-select");
-  const banner = document.getElementById("opal-result-banner");
-  const device = driveSelect ? driveSelect.value : "";
-
-  if (!device) {
-    if (banner) {
-      banner.innerHTML = `
-        <div style="background: rgba(239, 68, 68, 0.15); border: 1px solid var(--danger-red); padding: 0.85rem; border-radius: 8px; color: #fca5a5; font-weight: 600;">
-          Por favor selecciona una unidad SSD objetivo.
-        </div>
-      `;
-    }
-    return;
-  }
-
-  if (banner) banner.innerHTML = "";
-
-  pendingOpalDevice = device;
-  pendingOpalPsid = "";
-  pendingOpalAction = "nvme_crypto_erase";
-
-  const confirmTitle = document.getElementById("opal-confirm-title");
-  const confirmDeviceEl = document.getElementById("opal-confirm-device-text");
-  const confirmPsidRow = document.getElementById("opal-confirm-psid-row");
-  const confirmActionEl = document.getElementById("opal-confirm-action-text");
-  const confirmWarningEl = document.getElementById("opal-confirm-warning-text");
-
-  if (confirmTitle) confirmTitle.innerText = "Confirmar Borrado Criptográfico NVMe";
-  if (confirmDeviceEl) confirmDeviceEl.innerText = device;
-  if (confirmPsidRow) confirmPsidRow.style.display = "none";
-  if (confirmActionEl) confirmActionEl.innerText = "NVMe Sanitize / Format SES-2 Crypto Erase + Tabla GPT limpia";
-  if (confirmWarningEl) {
-    confirmWarningEl.innerText = "Esta acción destruirá todos los datos y particiones de la unidad de forma irreversible mediante comandos del controlador NVMe para restaurar el disco a valores de fábrica sin requerir PSID.";
-  }
-
-  const confirmModal = document.getElementById("opal-confirm-modal");
-  if (confirmModal) confirmModal.style.display = "flex";
-}
-
 function closeOpalConfirmModal() {
   const confirmModal = document.getElementById("opal-confirm-modal");
   if (confirmModal) confirmModal.style.display = "none";
 }
 
 async function executeOpalConfirmAction() {
-  if (pendingOpalAction === "nvme_crypto_erase") {
-    await executeNvmeCryptoEraseConfirmed();
-  } else {
-    await executeOpalRevertConfirmed();
-  }
-}
-
-async function executeNvmeCryptoEraseConfirmed() {
-  const device = pendingOpalDevice;
-  closeOpalConfirmModal();
-  if (!device) return;
-
-  const banner = document.getElementById("opal-result-banner");
-  const logContainer = document.getElementById("opal-log-container");
-  const logPre = document.getElementById("opal-log-output");
-  const btn = document.getElementById("btn-nvme-crypto-erase");
-  const btnPsid = document.getElementById("btn-exec-opal");
-
-  if (btn) {
-    btn.disabled = true;
-    btn.innerHTML = `<span class="spinner" style="display:inline-block; width:14px; height:14px; border:2px solid #fff; border-top-color:transparent; border-radius:50%; animation:spin 0.8s linear infinite; margin-right:8px; vertical-align:middle;"></span> Ejecutando Borrado Criptográfico NVMe...`;
-  }
-  if (btnPsid) btnPsid.disabled = true;
-
-  if (banner) {
-    banner.innerHTML = `
-      <div style="background: rgba(99, 102, 241, 0.15); border: 1px solid var(--primary-indigo, #6366f1); padding: 0.85rem; border-radius: 8px; color: #e0e7ff;">
-        <strong>Ejecutando Borrado Criptográfico NVMe en <code>${device}</code>...</strong><br>
-        <span style="font-size: 0.82rem; opacity: 0.9;">Cascada de comandos NVMe Sanitize / Format SES-2 en curso. No apagues el equipo.</span>
-      </div>
-    `;
-  }
-
-  if (logContainer) logContainer.style.display = "block";
-  if (logPre) logPre.innerText = `[1/5] Iniciando borrado criptografico NVMe en ${device}...\n`;
-
-  try {
-    const res = await fetch("/api/nvme-crypto-erase", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ device })
-    });
-    const data = await res.json();
-
-    if (logPre && data.log) {
-      logPre.innerText = data.log;
-    }
-
-    if (data.success) {
-      if (banner) {
-        banner.innerHTML = `
-          <div style="background: rgba(16, 185, 129, 0.15); border: 1px solid var(--success-green); padding: 1rem; border-radius: 8px; color: var(--text-main);">
-            <div style="font-size: 1rem; font-weight: 700; color: var(--success-green); margin-bottom: 0.4rem;">
-              Desbloqueo Criptográfico NVMe Exitoso
-            </div>
-            <div style="white-space: pre-line; line-height: 1.5; font-size: 0.88rem; color: #d1fae5;">${data.message}</div>
-          </div>
-        `;
-      }
-      if (typeof fetchOpalDrives === "function") fetchOpalDrives();
-      if (typeof refreshAllData === "function") refreshAllData();
-    } else {
-      if (banner) {
-        banner.innerHTML = `
-          <div style="background: rgba(239, 68, 68, 0.15); border: 1px solid var(--danger-red); padding: 1rem; border-radius: 8px; color: var(--text-main);">
-            <div style="font-size: 1rem; font-weight: 700; color: var(--danger-red); margin-bottom: 0.4rem;">
-              Firmware requiere PSID Revert
-            </div>
-            <div style="white-space: pre-line; line-height: 1.5; font-size: 0.88rem; color: #fca5a5;">${data.message || 'El controlador rechazó el borrado directo. Ingresa el código PSID de la etiqueta física.'}</div>
-          </div>
-        `;
-      }
-    }
-  } catch (err) {
-    if (banner) {
-      banner.innerHTML = `
-        <div style="background: rgba(239, 68, 68, 0.15); border: 1px solid var(--danger-red); padding: 0.85rem; border-radius: 8px; color: #fca5a5;">
-          <strong>Error de comunicación:</strong> ${err.message}
-        </div>
-      `;
-    }
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.innerHTML = "Ejecutar Borrado Criptográfico NVMe";
-    }
-    if (btnPsid) btnPsid.disabled = false;
-  }
+  await executeOpalRevertConfirmed();
 }
 
 async function executeOpalRevertConfirmed() {
@@ -342,13 +216,11 @@ async function executeOpalRevertConfirmed() {
   const logContainer = document.getElementById("opal-log-container");
   const logPre = document.getElementById("opal-log-output");
   const btn = document.getElementById("btn-exec-opal");
-  const btnCrypto = document.getElementById("btn-nvme-crypto-erase");
 
   if (btn) {
     btn.disabled = true;
     btn.innerHTML = `<span class="spinner" style="display:inline-block; width:14px; height:14px; border:2px solid #fff; border-top-color:transparent; border-radius:50%; animation:spin 0.8s linear infinite; margin-right:8px; vertical-align:middle;"></span> Ejecutando desbloqueo TCG Opal...`;
   }
-  if (btnCrypto) btnCrypto.disabled = true;
 
   if (banner) {
     banner.innerHTML = `

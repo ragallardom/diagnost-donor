@@ -39,9 +39,17 @@ if ! command -v apt-get >/dev/null 2>&1; then
       systemctl start docker || true
     fi
 
+    # Buscar bundle de certificados CA en el host (Arch/CachyOS, Debian/Ubuntu, etc.)
+    CA_MOUNT=""
+    if [ -f /etc/ssl/certs/ca-certificates.crt ]; then
+      CA_MOUNT="-v /etc/ssl/certs/ca-certificates.crt:/tmp/host-ca-bundle.crt:ro"
+    elif [ -f /etc/ca-certificates/extracted/tls-ca-bundle.pem ]; then
+      CA_MOUNT="-v /etc/ca-certificates/extracted/tls-ca-bundle.pem:/tmp/host-ca-bundle.crt:ro"
+    fi
+
     chmod +x "$SCRIPT_DIR/build_inside_container.sh"
     cd "$WORK_DIR"
-    docker run --privileged --rm -e DEBIAN_FRONTEND=noninteractive -v "$WORK_DIR:/work" -w /work ubuntu:24.04 bash ./builder/build_inside_container.sh
+    docker run --privileged --rm -e DEBIAN_FRONTEND=noninteractive $CA_MOUNT -v "$WORK_DIR:/work" -w /work ubuntu:24.04 bash ./builder/build_inside_container.sh
     exit 0
   else
     echo "❌ Error: Se requiere Docker instalado para compilar ISOs de Ubuntu en CachyOS."

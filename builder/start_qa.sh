@@ -76,12 +76,18 @@ fi
 export DISPLAY="${DISPLAY:-:0}"
 export XAUTHORITY="${XAUTHORITY:-/root/.Xauthority}"
 
+# Redimensionar /dev/shm y preparar ZRAM para evitar OOM/SIGKILL (Error code 9) en Live OS
+mount -o remount,size=2G /dev/shm 2>/dev/null || true
+modprobe zram 2>/dev/null || true
+if command -v zramctl >/dev/null 2>&1; then
+    (zramctl --find --size 2G && mkswap /dev/zram0 && swapon /dev/zram0 -p 32767) 2>/dev/null || true
+fi
+
 echo "[INICIO] Iniciando Suite de Diagnostico de Hardware (ThinkPad & EliteBook QA)..."
 
-# Preparar módulos de drivers Wi-Fi modernos, GPU y puertos Type-C/HDMI ThinkPad T14 Gen 5/6
-# (Intel Core Ultra xe/i915, AMDgpu, LSPCON HDMI, Thunderbolt, Type-C DP Alt Mode, Intel Wi-Fi 7 BE200/AX211, ath12k, rtw89, mt7925)
+# Preparar módulos de drivers Wi-Fi modernos, GPU y puertos Type-C/HDMI ThinkPad T14 Gen 5/6 en paralelo
 for mod in thinkpad_acpi intel_vsec ucsi_acpi typec typec_displayport thunderbolt xe i915 amdgpu drm_kms_helper iwlwifi iwlmvm ath12k_pci ath12k ath11k_pci ath11k rtw89_8852be rtw89_8852ce rtw89_8922ae rtw89_pci rtw89_core mt7921e mt7922e mt7925e rtw88_8822ce; do
-  modprobe "$mod" 2>/dev/null || true
+  modprobe "$mod" 2>/dev/null &
 done
 
 # Despertar y forzar escaneo de conectores de pantalla X11
@@ -97,9 +103,9 @@ for wlan_dev in /sys/class/net/wl*; do
   fi
 done
 
-systemctl restart NetworkManager 2>/dev/null || NetworkManager 2>/dev/null || true
+systemctl start NetworkManager 2>/dev/null || NetworkManager 2>/dev/null || true
 nmcli radio wifi on 2>/dev/null || true
-(sleep 1 && nmcli dev wifi rescan >/dev/null 2>&1 &)
+(sleep 0.5 && nmcli dev wifi rescan >/dev/null 2>&1 &)
 
 for dev in $(xinput list --name-only 2>/dev/null | grep -iE 'touchpad|synaptics|trackpad|glidepoint|elan'); do
   xinput set-prop "$dev" "libinput Natural Scrolling Enabled" 1 2>/dev/null || true
@@ -125,17 +131,19 @@ python3 "$APP_DIR/server.py" > /tmp/qa_server.log 2>&1 &
 SERVER_PID=$!
 
 # Wait for server to initialize and verify readiness
-for i in $(seq 1 20); do
+for i in $(seq 1 40); do
   if curl -s http://localhost:8080/ >/dev/null 2>&1; then
     break
   fi
-  sleep 0.2
+  sleep 0.05
 done
 
-# Chrome flags: Kiosk real + sin barras de advertencia ni scroll
+# Chrome flags: Kiosk real + sin barras de advertencia ni scroll + estabilidad de memoria en Linux Live
 rm -rf /tmp/chrome-profile
 CHROME_FLAGS="
   --no-sandbox
+  --disable-gpu-sandbox
+  --disable-dev-shm-usage
   --test-type
   --user-data-dir=/tmp/chrome-profile
   --kiosk
@@ -154,6 +162,9 @@ CHROME_FLAGS="
   --disable-client-side-phishing-detection
   --disable-sync
   --disable-extensions
+  --disable-breakpad
+  --disable-renderer-backgrounding
+  --disable-backgrounding-occluded-windows
   --disk-cache-size=1
   --media-cache-size=1
 "

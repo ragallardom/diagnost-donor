@@ -174,26 +174,7 @@ async function fetchOpalDrives() {
 }
 
 function handleDriveSelectionChange() {
-  const select = document.getElementById("opal-drive-select");
-  const bypassCard = document.getElementById("nvme-crypto-bypass-card");
-  const badge = document.getElementById("nvme-crypto-cap-badge");
-  if (!select) return;
-
-  const currentDev = select.value || "";
-  const driveInfo = cachedOpalDrives.find(d => (d.device || d.name) === currentDev);
-
-  if (bypassCard) {
-    if (currentDev.includes("nvme") || (driveInfo && driveInfo.crypto_supported)) {
-      bypassCard.style.display = "block";
-      if (badge && driveInfo && driveInfo.crypto_status_label) {
-        badge.innerText = driveInfo.crypto_status_label;
-      } else if (badge) {
-        badge.innerText = "Sanitize / Format SES-2";
-      }
-    } else {
-      bypassCard.style.display = "none";
-    }
-  }
+  // Target drive changed in select dropdown
 }
 
 function openOpalModalWithDrive(targetDevice) {

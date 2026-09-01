@@ -12,36 +12,39 @@ export TZ=UTC
 WORK_DIR="$(pwd)"
 
 # ── 0. Detección dinámica y auto-incremento de versión ───────────────
-get_latest_version() {
-  local versions=()
+get_latest_iso_version() {
+  local iso_versions=()
   
   if [ -d "$WORK_DIR/ISOs" ]; then
     for f in "$WORK_DIR/ISOs"/*.iso; do
       [ -f "$f" ] || continue
       ver=$(echo "$(basename "$f")" | grep -oP '\d+\.\d+\.\d+' || true)
-      [ -n "$ver" ] && versions+=("$ver")
+      [ -n "$ver" ] && iso_versions+=("$ver")
     done
   fi
 
-  if [ -f "$WORK_DIR/builder/VERSION" ]; then
-    ver=$(cat "$WORK_DIR/builder/VERSION" | tr -d ' \n\r' | grep -oP '\d+\.\d+\.\d+' || true)
-    [ -n "$ver" ] && versions+=("$ver")
-  elif [ -f "$WORK_DIR/VERSION" ]; then
-    ver=$(cat "$WORK_DIR/VERSION" | tr -d ' \n\r' | grep -oP '\d+\.\d+\.\d+' || true)
-    [ -n "$ver" ] && versions+=("$ver")
-  fi
-
-  if [ -f "$WORK_DIR/app/static/index.html" ]; then
-    ver=$(grep -oP 'v\K\d+\.\d+\.\d+' "$WORK_DIR/app/static/index.html" | head -n 1 || true)
-    [ -n "$ver" ] && versions+=("$ver")
-  fi
-
-  if [ ${#versions[@]} -eq 0 ]; then
-    echo "1.0.0"
+  if [ ${#iso_versions[@]} -eq 0 ]; then
+    echo ""
     return
   fi
 
-  printf '%s\n' "${versions[@]}" | sort -V | tail -n 1
+  printf '%s\n' "${iso_versions[@]}" | sort -V | tail -n 1
+}
+
+get_app_version() {
+  local ver=""
+  if [ -f "$WORK_DIR/builder/VERSION" ]; then
+    ver=$(cat "$WORK_DIR/builder/VERSION" | tr -d ' \n\r' | grep -oP '\d+\.\d+\.\d+' || true)
+  elif [ -f "$WORK_DIR/VERSION" ]; then
+    ver=$(cat "$WORK_DIR/VERSION" | tr -d ' \n\r' | grep -oP '\d+\.\d+\.\d+' || true)
+  fi
+
+  if [ -z "$ver" ] && [ -f "$WORK_DIR/app/static/index.html" ]; then
+    ver=$(grep -oP 'v\K\d+\.\d+\.\d+' "$WORK_DIR/app/static/index.html" | head -n 1 || true)
+  fi
+
+  [ -z "$ver" ] && ver="1.0.0"
+  echo "$ver"
 }
 
 increment_version() {
@@ -52,8 +55,31 @@ increment_version() {
   echo "${major}.${minor}.${patch}"
 }
 
-LATEST_VERSION=$(get_latest_version)
-NEW_VERSION=$(increment_version "$LATEST_VERSION")
+version_gt() {
+  [ -z "$1" ] && return 1
+  [ -z "$2" ] && return 0
+  [ "$1" = "$2" ] && return 1
+  local higher
+  higher=$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n 1)
+  [ "$higher" = "$1" ]
+}
+
+LATEST_ISO_VERSION=$(get_latest_iso_version)
+CURRENT_APP_VERSION=$(get_app_version)
+
+if [ -n "$LATEST_ISO_VERSION" ]; then
+  # Si la versión actual del código ya es mayor que la última ISO en ISOs/, no sumar y usarla directamente
+  if version_gt "$CURRENT_APP_VERSION" "$LATEST_ISO_VERSION"; then
+    NEW_VERSION="$CURRENT_APP_VERSION"
+  else
+    # Si no es mayor, la nueva versión es +1 respecto a la última ISO creada
+    NEW_VERSION=$(increment_version "$LATEST_ISO_VERSION")
+  fi
+else
+  # Si aún no existe ninguna ISO en ISOs/, usar la versión del programa o 1.0.0
+  NEW_VERSION="$CURRENT_APP_VERSION"
+fi
+
 ISO_NAME="diagnost-donor_${NEW_VERSION}_linux-live.iso"
 VOL_ID="diagnost-donor_${NEW_VERSION}_linux-live"
 # Asegurar limite maximo de 32 caracteres para Volume ID estandar ISO9660
@@ -75,11 +101,28 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 
 echo "================================================================="
 echo "  🔒 COMPILANDO ISO LINUX LIVE"
-echo "  🏷️ VERSIÓN ANTERIOR : v$LATEST_VERSION"
-echo "  🚀 NUEVA VERSIÓN    : v$NEW_VERSION ($ISO_NAME)"
-echo "  📋 REGISTRO (LOG)   : $LOG_FILE"
+if [ -n "$LATEST_ISO_VERSION" ]; then
+  echo "  🏷️ ÚLTIMA ISO EN ISOs/ : v$LATEST_ISO_VERSION"
+else
+  echo "  🏷️ ÚLTIMA ISO EN ISOs/ : (ninguna)"
+fi
+echo "  📦 VERSIÓN DEL PROGRAMA: v$CURRENT_APP_VERSION"
+echo "  🚀 VERSIÓN A COMPILAR  : v$NEW_VERSION ($ISO_NAME)"
+echo "  📋 REGISTRO (LOG)      : $LOG_FILE"
 echo "================================================================="
 
+
+# ── 0. Configurar certificados SSL y repositorios HTTPS ───────────────
+if [ -f /tmp/host-ca-bundle.crt ]; then
+  mkdir -p /etc/ssl/certs
+  cp /tmp/host-ca-bundle.crt /etc/ssl/certs/ca-certificates.crt
+fi
+
+if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+  sed -i "s|http://|https://|g" /etc/apt/sources.list.d/ubuntu.sources
+elif [ -f /etc/apt/sources.list ]; then
+  sed -i "s|http://|https://|g" /etc/apt/sources.list
+fi
 
 # ── 1. Instalar herramientas de compilacion ──────────────────────────
 apt-get update -q
@@ -113,27 +156,35 @@ lb config \
   --distribution noble \
   --mode ubuntu \
   --archive-areas "main restricted universe multiverse" \
+  --parent-mirror-bootstrap "https://archive.ubuntu.com/ubuntu" \
+  --parent-mirror-chroot "https://archive.ubuntu.com/ubuntu" \
+  --parent-mirror-binary "https://archive.ubuntu.com/ubuntu" \
+  --mirror-bootstrap "https://archive.ubuntu.com/ubuntu" \
+  --mirror-chroot "https://archive.ubuntu.com/ubuntu" \
+  --mirror-binary "https://archive.ubuntu.com/ubuntu" \
+  --parent-mirror-chroot-security "https://security.ubuntu.com/ubuntu" \
+  --parent-mirror-binary-security "https://security.ubuntu.com/ubuntu" \
+  --mirror-chroot-security "https://security.ubuntu.com/ubuntu" \
+  --mirror-binary-security "https://security.ubuntu.com/ubuntu" \
   --binary-images iso \
   --bootloader grub-efi \
   --iso-volume "$VOL_ID" \
   --memtest none \
   --initramfs initramfs-tools \
-  --bootappend-live "boot=live toram live-media-path=/live scan-delay=1 rootdelay=1 username=root quiet splash fastboot loglevel=0 console=tty2 vt.global_cursor_default=0 systemd.show_status=false rd.udev.log_level=0 modprobe.blacklist=nvidia_gpu drm.kms_helper.poll=1 xe.force_probe=* i915.force_probe=*" \
+  --bootappend-live "boot=live live-media-path=/live scan-delay=1 rootdelay=1 username=root quiet splash loglevel=3 modprobe.blacklist=nvidia_gpu drm.kms_helper.poll=1 xe.force_probe=* i915.force_probe=*" \
   --apt-secure false \
   --apt-options "--yes --no-install-recommends -o Dpkg::Options::=--force-confnew"
 
 # ── 4. Lista de paquetes del chroot ──────────────────────────────────
 # Paquetes optimizados: openbox mínimo en lugar de XFCE completo
-# para arranque rápido tipo WinPE (~15-30s vs ~2min)
+# para arranque ultra-rápido tipo WinPE (~15-20s)
 mkdir -p config/package-lists
 cat > config/package-lists/qa-suite.list.chroot << 'PKGEOF'
-# Boot/arranque con soporte de hardware completo (Kernel OEM 6.17/6.11 + Generic + Drivers)
+# Boot/arranque con soporte de hardware completo (Kernel OEM + Generic + Drivers)
 linux-oem-24.04d
 linux-image-oem-24.04d
-linux-headers-oem-24.04d
 linux-generic
 linux-image-generic
-linux-headers-generic
 live-boot
 live-config
 live-config-systemd
@@ -279,6 +330,12 @@ else
   echo "❌ ERROR CRÍTICO: No se encontró google-chrome-stable_current_amd64.deb"
   echo "   Buscado en: $WORK_DIR/Aplicaciones/, $WORK_DIR y /work"
   exit 1
+fi
+
+# Copiar certificados SSL a includes.chroot para que las descargas HTTPS dentro del chroot funcionen
+mkdir -p config/includes.chroot/etc/ssl/certs
+if [ -f /etc/ssl/certs/ca-certificates.crt ]; then
+  cp /etc/ssl/certs/ca-certificates.crt config/includes.chroot/etc/ssl/certs/ca-certificates.crt
 fi
 
 # Copiar cualquier otro archivo .deb adicional colocado en Aplicaciones/
@@ -532,7 +589,7 @@ pipewire-pulse >/tmp/pipewire-pulse.log 2>&1 &
 wireplumber >/tmp/wireplumber.log 2>&1 &
 
 # Esperar a que los servicios estén listos
-sleep 1.5
+sleep 0.4
 
 # Lanzar la terminal de diagnóstico visible con start_qa.sh
 xterm -geometry 110x30+40+40 -title "DIAGNOSTDONOR QA SUITE" -e "bash -c '/opt/qa_suite/start_qa.sh; exec bash'" &
@@ -627,12 +684,14 @@ if [ -z "$INITRD" ]; then
 fi
 
 # Garantizar la presencia de /live y /casper con filesystem.squashfs
-# live-boot requiere estrictamente /live/filesystem.squashfs para encontrar el medio
 mkdir -p "$BINARY_DIR/live" "$BINARY_DIR/casper"
 if [ -n "$SQUASHFS" ]; then
   if [ "$SQUASHFS" != "$BINARY_DIR/live/filesystem.squashfs" ]; then
-    echo "  📦 Copiando filesystem.squashfs a /live/ y /casper/..."
+    echo "  📦 Copiando filesystem.squashfs a /live/..."
     cp -f "$SQUASHFS" "$BINARY_DIR/live/filesystem.squashfs"
+  fi
+  if [ "$SQUASHFS" != "$BINARY_DIR/casper/filesystem.squashfs" ]; then
+    echo "  📦 Copiando filesystem.squashfs a /casper/..."
     cp -f "$SQUASHFS" "$BINARY_DIR/casper/filesystem.squashfs"
   fi
 fi
@@ -665,9 +724,14 @@ TIMEOUT 5
 PROMPT 0
 
 LABEL live
-  MENU LABEL Start Diagnost-Donor Live
+  MENU LABEL Start Diagnost-Donor Live (Fast USB Boot)
   KERNEL $VMLINUZ_REL
-  APPEND initrd=$INITRD_REL boot=live toram live-media-path=/live scan-delay=1 rootdelay=1 username=root quiet splash fastboot loglevel=0 console=tty2 vt.global_cursor_default=0 systemd.show_status=false rd.udev.log_level=0 modprobe.blacklist=nvidia_gpu drm.kms_helper.poll=1 xe.force_probe=* i915.force_probe=*
+  APPEND initrd=$INITRD_REL boot=live live-media-path=/live scan-delay=1 rootdelay=1 username=root quiet splash loglevel=3 modprobe.blacklist=nvidia_gpu drm.kms_helper.poll=1 xe.force_probe=* i915.force_probe=*
+
+LABEL toram
+  MENU LABEL Start Diagnost-Donor Live (Load to RAM - toram)
+  KERNEL $VMLINUZ_REL
+  APPEND initrd=$INITRD_REL boot=live toram live-media-path=/live scan-delay=1 rootdelay=1 username=root quiet splash loglevel=3 modprobe.blacklist=nvidia_gpu drm.kms_helper.poll=1 xe.force_probe=* i915.force_probe=*
 SYSEOF
 
 if [ -f "$BINARY_DIR/isolinux/isolinux.bin" ]; then
@@ -716,14 +780,19 @@ fi
 
 # Crear grub.cfg principal del ISO (en /boot/grub/)
 cat > "$BINARY_DIR/boot/grub/grub.cfg" << GRUBEOF
-set timeout=1
+set timeout=2
 set default=0
 
 insmod all_video
 insmod gfxterm
 
-menuentry "Diagnost-Donor Live (v$NEW_VERSION)" {
-    linux $VMLINUZ_REL boot=live toram live-media-path=/live scan-delay=1 rootdelay=1 username=root quiet splash fastboot loglevel=0 console=tty2 vt.global_cursor_default=0 systemd.show_status=false rd.udev.log_level=0 modprobe.blacklist=nvidia_gpu drm.kms_helper.poll=1 xe.force_probe=* i915.force_probe=*
+menuentry "Diagnost-Donor Live (v$NEW_VERSION) [Arranque rapido USB]" {
+    linux $VMLINUZ_REL boot=live live-media-path=/live scan-delay=1 rootdelay=1 username=root quiet splash loglevel=3 modprobe.blacklist=nvidia_gpu drm.kms_helper.poll=1 xe.force_probe=* i915.force_probe=*
+    initrd $INITRD_REL
+}
+
+menuentry "Diagnost-Donor Live (v$NEW_VERSION) [Cargar en memoria RAM - toram]" {
+    linux $VMLINUZ_REL boot=live toram live-media-path=/live scan-delay=1 rootdelay=1 username=root quiet splash loglevel=3 modprobe.blacklist=nvidia_gpu drm.kms_helper.poll=1 xe.force_probe=* i915.force_probe=*
     initrd $INITRD_REL
 }
 
