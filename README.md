@@ -13,7 +13,7 @@ Está orientado a pruebas rápidas de hardware en equipos corporativos (Lenovo T
 Si no deseas compilar la imagen desde el código fuente, puedes descargar la ISO lista para grabar:
 
 * **Descargar imagen ISO:** [Carpeta en Google Drive](https://drive.google.com/drive/folders/1OyvIwNIlQrwrBk6csGnisaWAhYtO8NJI?usp=sharing)
-* Versión de referencia: `diagnost-donor_1.1.12_linux-live.iso`
+* Versión de referencia: `diagnost-donor_1.1.13_linux-live.iso`
 
 ---
 
@@ -79,7 +79,7 @@ wget -O Aplicaciones/google-chrome-stable_current_amd64.deb https://dl.google.co
 ### Almacenamiento, diagnóstico LBA y desbloqueo SSD
 * **Pruebas de lectura de bajo nivel (Device Read & NVMe Read Test):**
   * Ejecuta pruebas no destructivas en LBA 0 y bloques secundarios similares a las de Lenovo UEFI Diagnostics.
-  * Diagnostica automáticamente unidades bloqueadas (`Posible bloqueo por cifrado TCG Opal`).
+  * Si cualquiera de las dos pruebas de lectura (o ambas) falla, el sistema alerta automáticamente con `Posible bloqueo por cifrado TCG Opal` y orienta al técnico hacia el proceso de desbloqueo.
 * **Desbloqueo TCG Opal / PSID Revert:**
   * Escáner QR optimizado para pantallas de teléfonos móviles y cámaras web de baja resolución.
   * **Receptor Bluetooth Android nativo (OBEX):** Permite emparejar el celular y compartir el código PSID directamente por Bluetooth sin instalar aplicaciones ni usar redes locales.

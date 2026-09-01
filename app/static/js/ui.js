@@ -335,9 +335,10 @@ function updateStorageTab(storage) {
     if (internalList.length > 0) {
       internalContainer.innerHTML = internalList.map(s => {
         const smartText = (s.smart_status || '').includes('100%') ? 'Salud 100% (Sin errores)' : (s.smart_status || 'Correcto');
-        const devReadPassed = s.device_read_test !== 'FAILED';
-        const nvmeReadPassed = s.nvme_read_test !== 'FAILED';
-        const isOpal = s.is_opal_locked || (!devReadPassed && !nvmeReadPassed);
+        const hasReadTests = Boolean(s.device_read_test && s.nvme_read_test);
+        const devReadPassed = s.device_read_test === 'PASSED';
+        const nvmeReadPassed = s.nvme_read_test === 'PASSED';
+        const isOpal = hasReadTests && (!devReadPassed || !nvmeReadPassed);
 
         let readSectionHtml = '';
         if (s.device_read_test && s.nvme_read_test) {

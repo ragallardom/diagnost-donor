@@ -75,15 +75,15 @@ def check_drive_read_and_opal(dev_path, is_usb=False):
     except Exception:
         pass
 
-    # If both low-level read tests fail on internal drive, or sedutil confirms lock
-    if (device_read == "FAILED" and nvme_read == "FAILED") or is_opal:
+    # If one or both low-level read tests fail on internal drive, or sedutil confirms lock
+    if (device_read == "FAILED" or nvme_read == "FAILED") or is_opal:
         is_opal = True
 
     return {
         'device_read_test': device_read,
         'nvme_read_test': nvme_read,
         'is_opal_locked': is_opal,
-        'read_diagnostic': 'Disco posiblemente encriptado con OPAL' if is_opal else ('PASSED' if (device_read == 'PASSED' and nvme_read == 'PASSED') else 'FAILED')
+        'read_diagnostic': 'Posible bloqueo por cifrado TCG Opal' if is_opal else ('PASSED' if (device_read == 'PASSED' and nvme_read == 'PASSED') else 'FAILED')
     }
 
 
