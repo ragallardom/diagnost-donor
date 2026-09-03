@@ -245,6 +245,7 @@ xinput
 tpm2-tools
 mokutil
 nvme-cli
+smartmontools
 parted
 util-linux
 zenity

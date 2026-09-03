@@ -87,6 +87,183 @@ def check_drive_read_and_opal(dev_path, is_usb=False):
     }
 
 
+import json
+import re
+
+
+def get_drive_endurance(dev_path, size_gb):
+    """
+    Evaluates SSD endurance, wear level and lifetime metrics:
+    - TBW (Terabytes Written)
+    - DWPD (Drive Writes Per Day)
+    - P/E Cycles (Program/Erase Cycles)
+    """
+    endurance = {
+        'supported': False,
+        'tbw_tb': None,
+        'tbw_str': 'N/D',
+        'dwpd': None,
+        'dwpd_str': 'N/D',
+        'pe_cycles': None,
+        'pe_cycles_str': 'N/D',
+        'power_on_hours': None,
+        'percentage_used': None,
+        'health_remaining_pct': None,
+    }
+
+    # Check if mechanical HDD
+    dev_name = os.path.basename(dev_path)
+    rotational_file = f"/sys/block/{dev_name}/queue/rotational"
+    is_hdd = False
+    if os.path.exists(rotational_file):
+        try:
+            with open(rotational_file, 'r') as f:
+                if f.read().strip() == '1':
+                    is_hdd = True
+        except Exception:
+            pass
+
+    # 1. Try smartctl with JSON output
+    data = None
+    for cmd in [['smartctl', '-j', '-a', dev_path], ['sudo', '-n', 'smartctl', '-j', '-a', dev_path]]:
+        try:
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=3)
+            if res.stdout:
+                parsed = json.loads(res.stdout)
+                if 'nvme_smart_health_information_log' in parsed or 'ata_smart_attributes' in parsed:
+                    data = parsed
+                    break
+        except Exception:
+            pass
+
+    # 2. If smartctl lacked data and it is NVMe, try nvme-cli
+    if not data and 'nvme' in dev_path:
+        for cmd in [['nvme', 'smart-log', dev_path, '-o', 'json'], ['sudo', '-n', 'nvme', 'smart-log', dev_path, '-o', 'json']]:
+            try:
+                res = subprocess.run(cmd, capture_output=True, text=True, timeout=3)
+                if res.returncode == 0 and res.stdout:
+                    nvme_data = json.loads(res.stdout)
+                    data = {'nvme_smart_health_information_log': nvme_data}
+                    break
+            except Exception:
+                pass
+
+    # 3. Text fallback for smartctl
+    if not data:
+        for cmd in [['smartctl', '-a', dev_path], ['sudo', '-n', 'smartctl', '-a', dev_path]]:
+            try:
+                res = subprocess.run(cmd, capture_output=True, text=True, timeout=3)
+                if res.stdout and ('Data Units Written' in res.stdout or 'Total_LBAs_Written' in res.stdout):
+                    out = res.stdout
+                    m_written = re.search(r'Data Units Written:\s+[\d,]+\s+\[([\d\.]+)\s*([KMGT]B)\]', out, re.I)
+                    m_hours = re.search(r'Power On Hours:\s+([\d,]+)', out, re.I)
+                    m_used = re.search(r'Percentage Used:\s+([\d]+)%?', out, re.I)
+
+                    tbw_val = None
+                    if m_written:
+                        num = float(m_written.group(1))
+                        unit = m_written.group(2).upper()
+                        tbw_val = num if 'TB' in unit else (num / 1000.0 if 'GB' in unit else num * 1000.0)
+
+                    poh_val = int(m_hours.group(1).replace(',', '')) if m_hours else None
+                    used_val = int(m_used.group(1)) if m_used else None
+
+                    if tbw_val is not None or poh_val is not None:
+                        data = {
+                            '_parsed_text': True,
+                            'tbw_tb': tbw_val,
+                            'poh': poh_val,
+                            'pct_used': used_val
+                        }
+                        break
+            except Exception:
+                pass
+
+    if not data:
+        return endurance
+
+    tbw_tb = None
+    poh = None
+    percentage_used = None
+    pe_cycles_direct = None
+
+    if data.get('_parsed_text'):
+        tbw_tb = data.get('tbw_tb')
+        poh = data.get('poh')
+        percentage_used = data.get('pct_used')
+    else:
+        # NVMe log
+        nvme_log = data.get('nvme_smart_health_information_log') or {}
+        if nvme_log:
+            units_written = nvme_log.get('data_units_written')
+            if units_written is not None:
+                # NVMe spec: 1 unit = 1000 * 512 bytes = 512,000 bytes
+                tbw_tb = round((units_written * 512000) / (10**12), 2)
+            poh = nvme_log.get('power_on_hours')
+            percentage_used = nvme_log.get('percentage_used')
+
+        # SATA SMART attributes
+        ata_tables = (data.get('ata_smart_attributes') or {}).get('table') or []
+        for attr in ata_tables:
+            attr_id = attr.get('id')
+            attr_name = (attr.get('name') or '').lower()
+            raw_val = (attr.get('raw') or {}).get('value', 0)
+
+            if attr_id == 9:
+                poh = raw_val
+            elif attr_id == 241 or 'total_lbas_written' in attr_name or 'host_writes' in attr_name:
+                if raw_val > 0:
+                    tbw_tb = round((raw_val * 512) / (10**12), 2)
+            elif attr_id in [177, 173] or 'wear_level' in attr_name or 'erase_count' in attr_name:
+                pe_cycles_direct = raw_val
+            elif attr_id in [231, 232] or 'ssd_life_left' in attr_name:
+                norm_val = attr.get('value')
+                if norm_val is not None:
+                    percentage_used = max(0, 100 - norm_val)
+
+        if poh is None:
+            poh = (data.get('power_on_time') or {}).get('hours')
+
+    if tbw_tb is not None or poh is not None or percentage_used is not None:
+        endurance['supported'] = True
+        endurance['power_on_hours'] = poh
+        endurance['percentage_used'] = percentage_used
+        if percentage_used is not None:
+            endurance['health_remaining_pct'] = max(0, 100 - percentage_used)
+
+        capacity_tb = max(0.01, size_gb / 1000.0)
+
+        # 1. Total Bytes Written
+        if tbw_tb is not None:
+            endurance['tbw_tb'] = round(tbw_tb, 2)
+            endurance['tbw_str'] = f"{round(tbw_tb, 2)} TBW"
+
+        # 2. Drive Writes Per Day
+        if tbw_tb is not None and poh is not None and poh > 0:
+            operating_days = max(1.0, poh / 24.0)
+            dwpd_val = round(tbw_tb / (capacity_tb * operating_days), 3)
+            endurance['dwpd'] = dwpd_val
+            endurance['dwpd_str'] = f"{dwpd_val} DWPD"
+
+        # 3. P/E Cycles
+        if is_hdd:
+            endurance['pe_cycles_str'] = "N/A (Disco Mecanico)"
+        elif pe_cycles_direct is not None and pe_cycles_direct > 0:
+            endurance['pe_cycles'] = pe_cycles_direct
+            endurance['pe_cycles_str'] = f"{pe_cycles_direct} ciclos"
+        elif tbw_tb is not None and size_gb > 0:
+            # Estimated Flash P/E cycles considering write amplification (~1.25x)
+            pe_est = int(round((tbw_tb * 1.25 * 1000.0) / size_gb))
+            endurance['pe_cycles'] = pe_est
+            endurance['pe_cycles_str'] = f"{pe_est} ciclos"
+        elif percentage_used is not None:
+            pe_est = int(round((percentage_used / 100.0) * 1500))
+            endurance['pe_cycles'] = pe_est
+            endurance['pe_cycles_str'] = f"~{pe_est} ciclos"
+
+    return endurance
+
+
 def get_storage_info():
     internal_drives = []
     usb_drives = []
@@ -136,6 +313,7 @@ def get_storage_info():
 
         if size_gb > 0:
             diag = check_drive_read_and_opal(dev_file_path, is_usb=is_usb)
+            endurance = get_drive_endurance(dev_file_path, size_gb)
 
             # Check NVMe Sanitize / Crypto Erase capability
             crypto_supported = False
@@ -166,7 +344,8 @@ def get_storage_info():
                 'is_opal_locked': diag['is_opal_locked'],
                 'read_diagnostic': diag['read_diagnostic'],
                 'crypto_supported': crypto_supported,
-                'crypto_status_label': crypto_label
+                'crypto_status_label': crypto_label,
+                'endurance': endurance
             }
             if is_usb:
                 usb_drives.append(drive_data)

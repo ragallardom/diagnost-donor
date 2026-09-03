@@ -258,10 +258,18 @@ function updateBatteryTab(batteries) {
   const batCycles = document.getElementById("bat-cycles");
   const batVoltage = document.getElementById("bat-voltage");
 
+  const statusColor = bat.has_charge_error ? "#ef4444" : (bat.is_charging ? "#10b981" : (bat.is_full ? "#3b82f6" : (bat.is_conservation ? "#a855f7" : "")));
+
   if (quickBat) quickBat.innerText = `${bat.capacity_percent}%`;
-  if (quickCharge) quickCharge.innerText = bat.status_es || bat.status;
+  if (quickCharge) {
+    quickCharge.innerText = bat.status_es || bat.status;
+    quickCharge.style.color = statusColor || "";
+  }
   if (batCap) batCap.innerText = `${bat.capacity_percent}%`;
-  if (batStatus) batStatus.innerText = bat.status_es || bat.status;
+  if (batStatus) {
+    batStatus.innerText = bat.status_es || bat.status;
+    batStatus.style.color = statusColor || "";
+  }
 
   if (batHealth) batHealth.innerText = `${bat.health_percent}%`;
   if (batDesign) batDesign.innerText = `${bat.design_wh} Wh`;
@@ -275,6 +283,12 @@ function updateBatteryTab(batteries) {
       alertBanner.innerHTML = `
         <div style="background-color: rgba(239, 68, 68, 0.2); border: 1px solid var(--danger-red); color: #fca5a5; padding: 0.5rem; border-radius: 6px; font-size: 0.8rem; margin-top: 0.4rem;">
           ${bat.error_msg}
+        </div>
+      `;
+    } else if (bat.is_conservation) {
+      alertBanner.innerHTML = `
+        <div style="background-color: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.4); color: #d8b4fe; padding: 0.45rem 0.6rem; border-radius: 6px; font-size: 0.78rem; margin-top: 0.4rem;">
+          Modo de protección de batería activo (Límite: ${bat.charge_threshold}%). La carga se detiene para prolongar la vida útil de la batería.
         </div>
       `;
     } else {
@@ -364,6 +378,29 @@ function updateStorageTab(storage) {
           `;
         }
 
+        let enduranceHtml = '';
+        if (s.endurance && s.endurance.supported) {
+          enduranceHtml = `
+            <div class="card-spec-item">
+              <span class="spec-label">Vida útil y desgaste (Endurance)</span>
+              <div class="spec-value spec-value-detail" style="font-family: var(--font-mono); font-size: 0.82rem; line-height: 1.45;">
+                Total Escrito (TBW): <span style="font-weight: 600; color: var(--text-main);">${s.endurance.tbw_str}</span><br>
+                Ciclos P/E: <span style="font-weight: 600; color: var(--text-main);">${s.endurance.pe_cycles_str}</span>
+                <span class="info-tip-wrap">
+                  <span class="info-tip-icon">i</span>
+                  <span class="info-tip-box">
+                    <strong style="color: #f1f5f9; display: block; margin-bottom: 0.25rem;">Referencia de ciclos P/E (SSD):</strong>
+                    • 0 a 100: Excelente<br>
+                    • 100 a 300: Muy bueno<br>
+                    • 300 a 600: Uso moderado<br>
+                    • Más de 800: Desgaste alto
+                  </span>
+                </span>
+              </div>
+            </div>
+          `;
+        }
+
         return `
           <div class="card-spec-item">
             <span class="spec-label">Disco interno (${s.type || 'SSD'})</span>
@@ -379,6 +416,7 @@ function updateStorageTab(storage) {
               ${isOpal ? 'SMART PASSED' : smartText}
             </div>
           </div>
+          ${enduranceHtml}
           ${readSectionHtml}
           ${opalAlertHtml}
         `;
@@ -539,6 +577,7 @@ function updateWifiTab(wifi) {
     const ethStatus = document.getElementById("eth-status-text");
     const ethIface = document.getElementById("eth-iface-text");
     const ethCarrier = document.getElementById("eth-carrier-text");
+    const ethLoopback = document.getElementById("eth-loopback-text");
 
     if (eth.present && eth.connected) {
       ethernetTestedPassed = true;
@@ -552,35 +591,51 @@ function updateWifiTab(wifi) {
         ethIface.innerHTML = `<code>${eth.primary.interface}</code>${speedStr}`;
       }
       if (ethCarrier) {
-        ethCarrier.innerText = "Enlace activo y transmitiendo";
+        ethCarrier.innerText = "Enlace activo";
         ethCarrier.style.color = "var(--success-green)";
+      }
+      if (ethLoopback && eth.primary) {
+        ethLoopback.innerText = eth.primary.loopback_label || "Enlace activo";
+        if (eth.primary.loopback_status === "verified") {
+          ethLoopback.style.color = "var(--success-green)";
+        } else {
+          ethLoopback.style.color = "var(--text-main)";
+        }
       }
     } else if (eth.present && !eth.connected) {
       if (ethernetTestedPassed) {
         markCheckpassed("chk-eth", "ETHERNET");
         if (ethStatus) {
-          ethStatus.innerText = "Cable desconectado (Validado con éxito)";
+          ethStatus.innerText = "Validado con éxito";
           ethStatus.style.color = "var(--success-green)";
         }
         if (ethIface && eth.primary) {
           ethIface.innerHTML = `<code>${eth.primary.interface}</code>`;
         }
         if (ethCarrier) {
-          ethCarrier.innerText = "Enlace probado y validado con éxito";
-          ethCarrier.style.color = "var(--success-green)";
+          ethCarrier.innerText = "Cable desconectado";
+          ethCarrier.style.color = "var(--text-muted)";
+        }
+        if (ethLoopback) {
+          ethLoopback.innerText = "Validado";
+          ethLoopback.style.color = "var(--success-green)";
         }
       } else {
         unmarkCheckpassed("chk-eth", "Ethernet");
         if (ethStatus) {
-          ethStatus.innerText = "Puerto disponible (Esperando conexión...)";
+          ethStatus.innerText = "Puerto disponible";
           ethStatus.style.color = "var(--text-main)";
         }
         if (ethIface && eth.primary) {
           ethIface.innerHTML = `<code>${eth.primary.interface}</code>`;
         }
         if (ethCarrier) {
-          ethCarrier.innerText = "Cable desconectado (Inserta cable RJ-45 para probar)";
+          ethCarrier.innerText = "Cable desconectado";
           ethCarrier.style.color = "var(--text-muted)";
+        }
+        if (ethLoopback) {
+          ethLoopback.innerText = "En espera de cable";
+          ethLoopback.style.color = "var(--text-muted)";
         }
       }
     } else {
@@ -596,8 +651,12 @@ function updateWifiTab(wifi) {
           ethIface.innerHTML = `<code>No integrado</code>`;
         }
         if (ethCarrier) {
-          ethCarrier.innerText = "Sin puerto RJ-45 en este equipo";
+          ethCarrier.innerText = "Sin puerto RJ-45";
           ethCarrier.style.color = "var(--text-muted)";
+        }
+        if (ethLoopback) {
+          ethLoopback.innerText = "No aplicable";
+          ethLoopback.style.color = "var(--text-muted)";
         }
       }
     }

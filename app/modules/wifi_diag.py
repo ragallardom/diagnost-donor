@@ -9,9 +9,86 @@ import os
 import subprocess
 import shutil
 import re
+import socket
+import select
+import struct
+import time
+
+_ETH_LOOPBACK_CACHE = {}
+
+
+def test_ethernet_loopback(dev, timeout_s=0.12):
+    """
+    Sends a specialized Ethernet test frame to determine if an RJ-45 loopback
+    plug (TX pins 1-2 bridged to RX pins 3-6) is connected, echoing the packet
+    directly back to the receiver without external network infrastructure.
+    """
+    global _ETH_LOOPBACK_CACHE
+    if _ETH_LOOPBACK_CACHE.get(dev, {}).get("verified"):
+        return True, _ETH_LOOPBACK_CACHE[dev].get("rtt_ms", 0.1)
+
+    if os.geteuid() != 0:
+        return False, "not_permitted"
+
+    sock = None
+    try:
+        # ETH_P_ALL = 0x0003
+        sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0003))
+        sock.bind((dev, 0))
+        sock.setblocking(False)
+
+        # Flush any pending incoming packets
+        while True:
+            try:
+                sock.recv(2048)
+            except Exception:
+                break
+
+        mac_bytes = b"\xff\xff\xff\xff\xff\xff"
+        try:
+            with open(f"/sys/class/net/{dev}/address", "r") as f:
+                mac_bytes = bytes.fromhex(f.read().strip().replace(":", ""))
+        except Exception:
+            pass
+
+        token = f"DONOR_LP_{int(time.time() * 1000)}".encode()
+        # EtherType 0x88B5 (IEEE 802 Local Experimental)
+        eth_header = mac_bytes + mac_bytes + struct.pack("!H", 0x88B5)
+        payload = token + b"\x00" * max(0, 46 - len(token))
+        frame = eth_header + payload
+
+        t_start = time.perf_counter()
+        sock.send(frame)
+
+        deadline = t_start + timeout_s
+        while time.perf_counter() < deadline:
+            rem = deadline - time.perf_counter()
+            if rem <= 0:
+                break
+            r, _, _ = select.select([sock], [], [], min(rem, 0.02))
+            if r:
+                try:
+                    data = sock.recv(2048)
+                    if token in data:
+                        rtt_ms = round((time.perf_counter() - t_start) * 1000, 2)
+                        _ETH_LOOPBACK_CACHE[dev] = {"verified": True, "rtt_ms": rtt_ms}
+                        return True, rtt_ms
+                except Exception:
+                    pass
+
+        return False, "no_echo"
+    except Exception as e:
+        return False, str(e)
+    finally:
+        if sock:
+            try:
+                sock.close()
+            except Exception:
+                pass
 
 
 def get_ethernet_status():
+    global _ETH_LOOPBACK_CACHE
     eth_interfaces = []
     if os.path.exists("/sys/class/net"):
         for dev in sorted(os.listdir("/sys/class/net")):
@@ -70,21 +147,43 @@ def get_ethernet_status():
 
             cable_connected = carrier or operstate == "up"
 
+            # Automatic Loopback Test
+            loopback_status = "idle"
+            loopback_label = "En espera de cable"
+            if cable_connected:
+                is_lp, rtt = test_ethernet_loopback(dev)
+                if is_lp:
+                    loopback_status = "verified"
+                    loopback_label = f"Loopback verificado (TX/RX OK - {rtt} ms)"
+                elif rtt == "no_echo":
+                    loopback_status = "standard_link"
+                    loopback_label = "Enlace activo (Red / Switch)"
+                else:
+                    loopback_status = "carrier_ok"
+                    loopback_label = "Enlace fisico activo (Carrier OK)"
+            else:
+                if dev in _ETH_LOOPBACK_CACHE:
+                    del _ETH_LOOPBACK_CACHE[dev]
+
             eth_interfaces.append({
                 "interface": dev,
                 "is_physical": is_physical,
                 "cable_connected": cable_connected,
                 "operstate": operstate,
                 "speed_mbps": speed,
-                "mac": mac
+                "mac": mac,
+                "loopback_status": loopback_status,
+                "loopback_label": loopback_label
             })
 
     present = len(eth_interfaces) > 0
     connected = any(i["cable_connected"] for i in eth_interfaces)
+    loopback_verified = any(i.get("loopback_status") == "verified" for i in eth_interfaces)
 
     return {
         "present": present,
         "connected": connected,
+        "loopback_verified": loopback_verified,
         "interfaces": eth_interfaces,
         "primary": eth_interfaces[0] if eth_interfaces else None,
         "status_label": "Cable conectado OK" if connected else ("Cable desconectado" if present else "Sin puerto Ethernet integrado")

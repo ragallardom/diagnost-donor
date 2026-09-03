@@ -8,6 +8,13 @@ Detects Battery Health, Cycle Count, Charger Connection, and Charging Errors
 import os
 import glob
 import subprocess
+import time
+
+# Module-level state tracking for AC connection debounce & energy flow
+_AC_TRACKER = {
+    'last_ac_online': False,
+    'ac_connect_time': 0.0,
+}
 
 def get_sysfs_value(filepath, default=None, is_int=False):
     try:
@@ -19,25 +26,61 @@ def get_sysfs_value(filepath, default=None, is_int=False):
         pass
     return default
 
-def get_upower_cycle_and_status(bat_name):
+def get_upower_info(bat_name):
     cycles = None
     upower_status = None
+    end_threshold = None
     try:
-        res = subprocess.run(['upower', '-i', f'/org/freedesktop/UPower/devices/battery_{bat_name}'], capture_output=True, text=True, timeout=2)
+        dev_path = f'/org/freedesktop/UPower/devices/battery_{bat_name}'
+        res = subprocess.run(['upower', '-i', dev_path], capture_output=True, text=True, timeout=2)
+        if res.returncode != 0:
+            # Enumerate upower devices if exact name didn't match
+            enum_res = subprocess.run(['upower', '-e'], capture_output=True, text=True, timeout=2)
+            if enum_res.returncode == 0:
+                for d in enum_res.stdout.splitlines():
+                    if 'battery' in d.lower() and (bat_name.lower() in d.lower() or not dev_path):
+                        dev_path = d.strip()
+                        break
+                res = subprocess.run(['upower', '-i', dev_path], capture_output=True, text=True, timeout=2)
+
         if res.returncode == 0:
             for line in res.stdout.split('\n'):
-                if 'cycle-count:' in line:
+                line_str = line.strip()
+                if 'cycle-count:' in line_str:
                     try:
-                        cycles = int(line.split(':')[1].strip())
+                        cycles = int(line_str.split(':')[1].strip())
                     except ValueError:
                         pass
-                elif 'state:' in line:
-                    upower_status = line.split(':')[1].strip()
+                elif 'state:' in line_str:
+                    upower_status = line_str.split(':')[1].strip().lower()
+                elif 'charge-end-threshold:' in line_str:
+                    try:
+                        val = line_str.split(':')[1].strip().replace('%', '').strip()
+                        end_threshold = int(val)
+                    except ValueError:
+                        pass
     except Exception:
         pass
-    return cycles, upower_status
+    return cycles, upower_status, end_threshold
+
+def is_ac_online_sysfs():
+    """Detect if any AC / Mains / USB-C charger is connected via sysfs."""
+    # 1. Standard AC/ADP paths
+    for p in glob.glob('/sys/class/power_supply/AC*') + glob.glob('/sys/class/power_supply/ADP*'):
+        if get_sysfs_value(os.path.join(p, 'online'), 0, is_int=True) == 1:
+            return True
+
+    # 2. Check all other non-battery power supplies (USB-C PD, Mains, etc.)
+    for ps in glob.glob('/sys/class/power_supply/*'):
+        ps_type = str(get_sysfs_value(os.path.join(ps, 'type'), '')).lower()
+        if ps_type not in ['battery', '']:
+            if get_sysfs_value(os.path.join(ps, 'online'), 0, is_int=True) == 1:
+                return True
+
+    return False
 
 def get_battery_info():
+    global _AC_TRACKER
     batteries = []
     bat_paths = sorted(glob.glob('/sys/class/power_supply/BAT*'))
     
@@ -45,43 +88,93 @@ def get_battery_info():
         bat_paths = sorted(glob.glob('/sys/class/power_supply/*'))
         bat_paths = [p for p in bat_paths if 'BAT' in p.upper() or 'battery' in p.lower()]
 
-    ac_paths = sorted(glob.glob('/sys/class/power_supply/AC*') + glob.glob('/sys/class/power_supply/ADP*'))
-    ac_online = False
-    for ac in ac_paths:
-        if get_sysfs_value(os.path.join(ac, 'online'), 0, is_int=True) == 1:
-            ac_online = True
+    ac_online = is_ac_online_sysfs()
+    now = time.time()
+
+    # AC connection debounce / duration tracking
+    if ac_online:
+        if not _AC_TRACKER['last_ac_online']:
+            _AC_TRACKER['last_ac_online'] = True
+            _AC_TRACKER['ac_connect_time'] = now
+        ac_duration = now - _AC_TRACKER['ac_connect_time']
+    else:
+        _AC_TRACKER['last_ac_online'] = False
+        _AC_TRACKER['ac_connect_time'] = 0.0
+        ac_duration = 0.0
 
     for bat_path in bat_paths:
         name = os.path.basename(bat_path)
-        sysfs_status = get_sysfs_value(os.path.join(bat_path, 'status'), 'Unknown')
+        sysfs_status = str(get_sysfs_value(os.path.join(bat_path, 'status'), 'Unknown'))
         capacity = get_sysfs_value(os.path.join(bat_path, 'capacity'), 0, is_int=True)
-        
-        up_cycles, up_status = get_upower_cycle_and_status(name)
+        capacity_level = str(get_sysfs_value(os.path.join(bat_path, 'capacity_level'), '')).lower()
+
+        # Read charge control threshold from sysfs if present
+        sysfs_end_threshold = get_sysfs_value(os.path.join(bat_path, 'charge_control_end_threshold'), None, is_int=True)
+
+        up_cycles, up_status, up_threshold = get_upower_info(name)
+
+        end_threshold = sysfs_end_threshold if sysfs_end_threshold is not None else up_threshold
+        # If sysfs threshold is 100 but upower reported e.g. 80, prefer the restricted threshold (< 100)
+        if sysfs_end_threshold == 100 and up_threshold and up_threshold < 100:
+            end_threshold = up_threshold
 
         status = sysfs_status
-        if status == 'Unknown' and up_status:
-            status = up_status.capitalize()
+        status_lower = status.lower()
+        up_status_lower = (up_status or '').lower()
 
-        # DETECT CHARGER / BATTERY ANOMALIES & CHARGE PORT ERRORS
+        # If either sysfs or upower reports charging, it is definitely charging!
+        is_charging = (status_lower in ['charging', 'cargando']) or (up_status_lower in ['charging', 'cargando'])
+        if is_charging:
+            ac_online = True  # Battery cannot charge without AC power
+            status = 'Charging'
+            status_lower = 'charging'
+
+        # DETECT CHARGE MODES & ANOMALIES (False-Positive Prevention)
         has_charge_error = False
         error_msg = ""
-        status_es = "Descargando"
+        is_full = False
+        is_conservation = False
 
-        status_lower = status.lower()
-        if status_lower in ['charging', 'cargando']:
-            status_es = "Cargando"
-        elif status_lower in ['full', 'completa']:
-            status_es = "Carga Completa (100%)"
-        elif status_lower == 'not charging':
-            has_charge_error = True
-            error_msg = "CARGADOR CONECTADO PERO BATERIA NO CARGA (Posible fallo de puerto, cargador o umbral BIOS)"
-            status_es = "NO CARGANDO (Cargador Conectado)"
-        elif ac_online and capacity < 95 and status_lower != 'charging':
-            has_charge_error = True
-            error_msg = "ALERTA: Cargador detectado en puerto pero la bateria no recibe carga."
-            status_es = "Puerto AC Conectado / Sin Carga"
+        # 1. Full Battery check
+        # Laptops stop charging when >= 95% (or >= 90% in 'Not charging' / 'Full' state)
+        if capacity >= 95 or capacity_level == 'full' or status_lower in ['full', 'completa'] or up_status_lower == 'fully-charged':
+            is_full = True
+        elif capacity >= 90 and (status_lower in ['not charging', 'idle'] or up_status_lower in ['not-charging', 'idle']):
+            is_full = True
+
+        # 2. Conservation / Threshold check
+        # When battery conservation mode (e.g. 60%, 80%) is enabled in BIOS/software
+        if end_threshold and end_threshold < 100 and capacity >= (end_threshold - 3):
+            is_conservation = True
+
+        # 3. Determine status_es and errors
+        if is_charging:
+            status_es = f"Cargando ({capacity}%)"
+        elif is_full:
+            if ac_online:
+                status_es = f"Carga Completa ({capacity}%)"
+            else:
+                status_es = f"Batería Completa ({capacity}%)"
+        elif is_conservation:
+            status_es = f"Cargador Conectado / Umbral Activo ({end_threshold}%)"
         elif ac_online:
-            status_es = "Cargador Conectado"
+            # AC is plugged in, not charging yet, not full, not in conservation
+            if up_status_lower == 'pending-charge' or ac_duration < 10.0:
+                # Negotiation / handshake grace period (first 10 seconds of plugging in)
+                status_es = f"Cargador Conectado (Iniciando carga... {capacity}%)"
+            elif capacity < 90 and (status_lower in ['not charging', 'discharging'] or up_status_lower in ['not-charging', 'discharging']):
+                # Sustained non-charging state after 10+ seconds
+                has_charge_error = True
+                error_msg = "CARGADOR CONECTADO PERO SIN CARGA (Posible fallo de puerto, cargador insuficiente o umbral BIOS)"
+                status_es = "Conectado / Batería No Carga"
+            else:
+                status_es = f"Cargador Conectado ({capacity}%)"
+        else:
+            # On battery power
+            if status_lower in ['discharging', 'descargando'] or up_status_lower == 'discharging':
+                status_es = f"Descargando ({capacity}%)"
+            else:
+                status_es = f"Uso de Batería ({capacity}%)"
 
         # Energy / Charge readings (in uWh or uAh)
         energy_full_design = (
@@ -122,6 +215,10 @@ def get_battery_info():
             'ac_online': ac_online,
             'has_charge_error': has_charge_error,
             'error_msg': error_msg,
+            'is_charging': is_charging,
+            'is_full': is_full,
+            'is_conservation': is_conservation,
+            'charge_threshold': end_threshold,
             'capacity_percent': capacity,
             'health_percent': health_percent,
             'design_wh': design_wh,
@@ -143,6 +240,10 @@ def get_battery_info():
             'ac_online': ac_online,
             'has_charge_error': False,
             'error_msg': '',
+            'is_charging': False,
+            'is_full': True,
+            'is_conservation': False,
+            'charge_threshold': None,
             'capacity_percent': 100,
             'health_percent': 100.0,
             'design_wh': 0.0,

@@ -23,7 +23,7 @@
       <div class="status-dot online"></div>
       <h1>DIAGNOST-DONOR</h1>
       <span
-        style="font-size: 0.75rem; color: #ffffff; font-weight: 500; font-family: var(--font-mono); margin-left: 2px;">v1.1.13</span>
+        style="font-size: 0.75rem; color: #ffffff; font-weight: 500; font-family: var(--font-mono); margin-left: 2px;">v1.1.14</span>
       <span class="badge-purple" id="header-serial">S/N: Detectando...</span>
     </div>
     <div class="system-quick-stats">
@@ -152,9 +152,21 @@
             <div class="spec-value" id="bat-status-text">--</div>
           </div>
           <div id="charge-alert-banner"></div>
-          <div class="bat-metrics-grid">
-            <div class="bat-metric-item"><span>Ciclos de carga:</span> <strong id="bat-cycles"
-                style="color: #a855f7;">--</strong></div>
+            <div class="bat-metric-item">
+              <span>Ciclos de carga:
+                <span class="info-tip-wrap">
+                  <span class="info-tip-icon">i</span>
+                  <span class="info-tip-box">
+                    <strong style="color: #f1f5f9; display: block; margin-bottom: 0.25rem;">Referencia de ciclos (Batería):</strong>
+                    • 0 a 300: Excelente<br>
+                    • 300 a 500: Normal / Buen estado<br>
+                    • 500 a 800: Desgaste moderado<br>
+                    • Más de 800: Desgaste alto
+                  </span>
+                </span>
+              </span>
+              <strong id="bat-cycles" style="color: #a855f7;">--</strong>
+            </div>
             <div class="bat-metric-item"><span>Salud real:</span> <strong id="bat-health-val"
                 class="highlight-purple">--%</strong></div>
             <div class="bat-metric-item"><span>Carga actual:</span> <strong id="bat-capacity">--%</strong></div>
@@ -380,6 +392,10 @@
             <div class="card-spec-item">
               <span class="spec-label">Enlace físico / Cable</span>
               <div class="spec-value spec-value-detail" id="eth-carrier-text">--</div>
+            </div>
+            <div class="card-spec-item">
+              <span class="spec-label">Diagnóstico Loopback (TX/RX)</span>
+              <div class="spec-value spec-value-detail" id="eth-loopback-text" style="color: var(--text-muted);">En espera de cable</div>
             </div>
           </div>
         </div>

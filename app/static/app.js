@@ -440,27 +440,58 @@ function updateSystemTab(sys) {
 function updateBatteryTab(batteries) {
   if (!batteries || batteries.length === 0) return;
   const bat = batteries[0];
+  const statusColor = bat.has_charge_error ? "#ef4444" : (bat.is_charging ? "#10b981" : (bat.is_full ? "#3b82f6" : (bat.is_conservation ? "#a855f7" : "")));
 
-  document.getElementById("quick-bat").innerText = `${bat.capacity_percent}%`;
-  document.getElementById("quick-charge-status").innerText = bat.status_es;
-  document.getElementById("bat-capacity").innerText = `${bat.capacity_percent}%`;
-  document.getElementById("bat-status-text").innerText = bat.status_es;
+  const qBat = document.getElementById("quick-bat");
+  if (qBat) qBat.innerText = `${bat.capacity_percent}%`;
 
-  document.getElementById("bat-health-val").innerText = `${bat.health_percent}%`;
-  document.getElementById("bat-design-wh").innerText = `${bat.design_wh} Wh`;
-  document.getElementById("bat-full-wh").innerText = `${bat.full_wh} Wh`;
-  document.getElementById("bat-cycles").innerText = bat.cycle_count;
-  document.getElementById("bat-voltage").innerText = `${bat.voltage_v} V`;
+  const qCharge = document.getElementById("quick-charge-status");
+  if (qCharge) {
+    qCharge.innerText = bat.status_es || bat.status;
+    qCharge.style.color = statusColor || "";
+  }
+
+  const bCap = document.getElementById("bat-capacity");
+  if (bCap) bCap.innerText = `${bat.capacity_percent}%`;
+
+  const bStatus = document.getElementById("bat-status-text");
+  if (bStatus) {
+    bStatus.innerText = bat.status_es || bat.status;
+    bStatus.style.color = statusColor || "";
+  }
+
+  const bHealth = document.getElementById("bat-health-val");
+  if (bHealth) bHealth.innerText = `${bat.health_percent}%`;
+
+  const bDesign = document.getElementById("bat-design-wh");
+  if (bDesign) bDesign.innerText = `${bat.design_wh} Wh`;
+
+  const bFull = document.getElementById("bat-full-wh");
+  if (bFull) bFull.innerText = `${bat.full_wh} Wh`;
+
+  const bCycles = document.getElementById("bat-cycles");
+  if (bCycles) bCycles.innerText = bat.cycle_count || "N/A";
+
+  const bVolt = document.getElementById("bat-voltage");
+  if (bVolt) bVolt.innerText = `${bat.voltage_v} V`;
 
   const alertBanner = document.getElementById("charge-alert-banner");
-  if (bat.has_charge_error && bat.error_msg) {
-    alertBanner.innerHTML = `
-      <div style="background-color: rgba(239, 68, 68, 0.2); border: 1px solid var(--danger-red); color: #fca5a5; padding: 0.5rem; border-radius: 6px; font-size: 0.8rem; margin-top: 0.4rem;">
-        ${bat.error_msg}
-      </div>
-    `;
-  } else {
-    alertBanner.innerHTML = '';
+  if (alertBanner) {
+    if (bat.has_charge_error && bat.error_msg) {
+      alertBanner.innerHTML = `
+        <div style="background-color: rgba(239, 68, 68, 0.2); border: 1px solid var(--danger-red); color: #fca5a5; padding: 0.5rem; border-radius: 6px; font-size: 0.8rem; margin-top: 0.4rem;">
+          ${bat.error_msg}
+        </div>
+      `;
+    } else if (bat.is_conservation) {
+      alertBanner.innerHTML = `
+        <div style="background-color: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.4); color: #d8b4fe; padding: 0.45rem 0.6rem; border-radius: 6px; font-size: 0.78rem; margin-top: 0.4rem;">
+          Modo de protección de batería activo (Límite: ${bat.charge_threshold}%). La carga se detiene para prolongar la vida útil de la batería.
+        </div>
+      `;
+    } else {
+      alertBanner.innerHTML = '';
+    }
   }
 }
 
@@ -564,6 +595,29 @@ function updateStorageTab(storage) {
       `;
     }
 
+    let enduranceHtml = '';
+    if (s.endurance && s.endurance.supported) {
+      enduranceHtml = `
+        <div class="card-spec-item">
+          <span class="spec-label">Vida útil y desgaste (Endurance)</span>
+          <div class="spec-value spec-value-detail" style="font-family: var(--font-mono); font-size: 0.82rem; line-height: 1.45;">
+            Total Escrito (TBW): <span style="font-weight: 600; color: var(--text-main);">${s.endurance.tbw_str}</span><br>
+            Ciclos P/E: <span style="font-weight: 600; color: var(--text-main);">${s.endurance.pe_cycles_str}</span>
+            <span class="info-tip-wrap">
+              <span class="info-tip-icon">i</span>
+              <span class="info-tip-box">
+                <strong style="color: #f1f5f9; display: block; margin-bottom: 0.25rem;">Referencia de ciclos P/E (SSD):</strong>
+                • 0 a 100: Excelente<br>
+                • 100 a 300: Muy bueno<br>
+                • 300 a 600: Uso moderado<br>
+                • Más de 800: Desgaste alto
+              </span>
+            </span>
+          </div>
+        </div>
+      `;
+    }
+
     return `
       <div class="card-spec-item">
         <span class="spec-label">Disco interno SSD</span>
@@ -579,6 +633,7 @@ function updateStorageTab(storage) {
           ${isOpal ? 'SMART PASSED (Controlador activo)' : smartText}
         </div>
       </div>
+      ${enduranceHtml}
       ${readSectionHtml}
       ${cryptoCompatHtml}
       ${opalAlertHtml}
@@ -687,11 +742,12 @@ function updateWifiTab(wifi) {
     const ethStatus = document.getElementById("eth-status-text");
     const ethIface = document.getElementById("eth-iface-text");
     const ethCarrier = document.getElementById("eth-carrier-text");
+    const ethLoopback = document.getElementById("eth-loopback-text");
 
     if (eth.present && eth.connected) {
       markCheckpassed("chk-eth", "ETHERNET");
       if (ethStatus) {
-        ethStatus.innerText = "Cable conectado OK";
+        ethStatus.innerText = "Cable conectado";
         ethStatus.style.color = "var(--success-green)";
       }
       if (ethIface && eth.primary) {
@@ -699,21 +755,33 @@ function updateWifiTab(wifi) {
         ethIface.innerHTML = `<code>${eth.primary.interface}</code>${speedStr}`;
       }
       if (ethCarrier) {
-        ethCarrier.innerText = "Enlace activo y transmitiendo";
+        ethCarrier.innerText = "Enlace activo";
         ethCarrier.style.color = "var(--success-green)";
+      }
+      if (ethLoopback && eth.primary) {
+        ethLoopback.innerText = eth.primary.loopback_label || "Enlace activo";
+        if (eth.primary.loopback_status === "verified") {
+          ethLoopback.style.color = "var(--success-green)";
+        } else {
+          ethLoopback.style.color = "var(--text-main)";
+        }
       }
     } else if (eth.present && !eth.connected) {
       unmarkCheckpassed("chk-eth", "Ethernet");
       if (ethStatus) {
-        ethStatus.innerText = "Puerto disponible (Esperando conexión...)";
+        ethStatus.innerText = "Puerto disponible";
         ethStatus.style.color = "var(--text-main)";
       }
       if (ethIface && eth.primary) {
         ethIface.innerHTML = `<code>${eth.primary.interface}</code>`;
       }
       if (ethCarrier) {
-        ethCarrier.innerText = "Cable desconectado (Inserta cable RJ-45 para probar)";
+        ethCarrier.innerText = "Cable desconectado";
         ethCarrier.style.color = "var(--text-muted)";
+      }
+      if (ethLoopback) {
+        ethLoopback.innerText = "En espera de cable";
+        ethLoopback.style.color = "var(--text-muted)";
       }
     } else {
       markCheckfailed("chk-eth", "ETHERNET");
@@ -725,8 +793,12 @@ function updateWifiTab(wifi) {
         ethIface.innerHTML = `<code>No integrado</code>`;
       }
       if (ethCarrier) {
-        ethCarrier.innerText = "Sin puerto RJ-45 en este equipo";
+        ethCarrier.innerText = "Sin puerto RJ-45";
         ethCarrier.style.color = "var(--text-muted)";
+      }
+      if (ethLoopback) {
+        ethLoopback.innerText = "No aplicable";
+        ethLoopback.style.color = "var(--text-muted)";
       }
     }
   }

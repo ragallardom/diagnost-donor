@@ -370,6 +370,84 @@ body.stealth-purple-theme {
   align-items: center;
 }
 
+/* SOBER INFORMATIVE TOOLTIP ("i") */
+.info-tip-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 0.4rem;
+  vertical-align: middle;
+  cursor: help;
+}
+
+.info-tip-icon {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  font-size: 0.65rem;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-style: normal;
+  color: #94a3b8;
+  border: 1px solid #475569;
+  background: rgba(30, 41, 59, 0.7);
+  transition: all 0.2s ease;
+  line-height: 1;
+  user-select: none;
+}
+
+.info-tip-wrap:hover .info-tip-icon {
+  color: #38bdf8;
+  border-color: #38bdf8;
+  background: rgba(56, 189, 248, 0.15);
+}
+
+.info-tip-box {
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 50%;
+  transform: translateX(-30%);
+  width: max-content;
+  max-width: 260px;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.73rem;
+  color: #cbd5e1;
+  font-family: var(--font-sans);
+  line-height: 1.45;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease, visibility 0.15s ease;
+  z-index: 1000;
+  font-weight: normal;
+  text-align: left;
+  white-space: normal;
+}
+
+.info-tip-box::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 30%;
+  margin-left: -4px;
+  border-width: 4px;
+  border-style: solid;
+  border-color: #334155 transparent transparent transparent;
+}
+
+.info-tip-wrap:hover .info-tip-box {
+  opacity: 1;
+  visibility: visible;
+}
+
 /* Buttons */
 .btn {
   background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
