@@ -464,8 +464,8 @@ cat > config/includes.chroot/etc/firefox/policies/policies.json << 'FFEOF'
 {
   "policies": {
     "Permissions": {
-      "Camera":     { "Allow": ["http://localhost:8080"] },
-      "Microphone": { "Allow": ["http://localhost:8080"] }
+      "Camera":     { "Allow": ["http://localhost:8080", "http://127.0.0.1:8080"] },
+      "Microphone": { "Allow": ["http://localhost:8080", "http://127.0.0.1:8080"] }
     }
   }
 }
@@ -475,11 +475,11 @@ FFEOF
 # Chromium-browser usa /etc/chromium-browser/policies/managed/
 # Google Chrome usa /etc/opt/chrome/policies/managed/
 POLICY_JSON='{
-  "VideoCaptureAllowedUrls": ["http://localhost:8080"],
-  "AudioCaptureAllowedUrls":  ["http://localhost:8080"],
+  "VideoCaptureAllowedUrls": ["http://localhost:8080", "http://127.0.0.1:8080"],
+  "AudioCaptureAllowedUrls":  ["http://localhost:8080", "http://127.0.0.1:8080"],
   "DefaultGeolocationSetting": 2,
   "AutoplayAllowed": true,
-  "AutoplayAllowlist": ["http://localhost:8080"],
+  "AutoplayAllowlist": ["http://localhost:8080", "http://127.0.0.1:8080"],
   "TranslateEnabled": false,
   "DefaultCookiesSetting": 1,
   "DefaultNotificationsSetting": 2,
@@ -488,7 +488,8 @@ POLICY_JSON='{
   "MetricsReportingEnabled": false,
   "SafeBrowsingEnabled": false,
   "PasswordManagerEnabled": false,
-  "DefaultSearchProviderEnabled": false
+  "DefaultSearchProviderEnabled": false,
+  "DeveloperToolsAvailability": 2
 }'
 
 mkdir -p config/includes.chroot/etc/chromium-browser/policies/managed
@@ -556,6 +557,14 @@ Section "InputClass"
 EndSection
 XORGEOF
 
+# 7c-3. Blindaje Xorg Kiosk: Deshabilitar cambio de terminales TTY (Ctrl+Alt+F1..F6) y cierre con Ctrl+Alt+Backspace
+cat > config/includes.chroot/etc/X11/xorg.conf.d/10-kiosk-security.conf << 'XORGEOF'
+Section "ServerFlags"
+    Option "DontVTSwitch" "true"
+    Option "DontZap" "true"
+EndSection
+XORGEOF
+
 # 7d. Openbox autostart: desmutear audio, iniciar red y lanzar terminal visible xterm con start_qa.sh
 mkdir -p config/includes.chroot/etc/xdg/openbox
 cat > config/includes.chroot/etc/xdg/openbox/autostart << 'OBEOF'
@@ -592,8 +601,8 @@ wireplumber >/tmp/wireplumber.log 2>&1 &
 # Esperar a que los servicios estén listos
 sleep 0.4
 
-# Lanzar la terminal de diagnóstico visible con start_qa.sh
-xterm -geometry 110x30+40+40 -title "DIAGNOSTDONOR QA SUITE" -e "bash -c '/opt/qa_suite/start_qa.sh; exec bash'" &
+# Lanzar el iniciador de diagnóstico con start_qa.sh
+xterm -geometry 110x30+40+40 -title "DIAGNOSTDONOR QA SUITE" -e "/opt/qa_suite/start_qa.sh" &
 OBEOF
 chmod +x config/includes.chroot/etc/xdg/openbox/autostart
 
@@ -609,7 +618,7 @@ cat > config/includes.chroot/etc/xdg/openbox/rc.xml << 'RCEOF'
   </theme>
   <desktops><number>1</number></desktops>
   <keyboard>
-    <keybind key="A-F4"><action name="Close"/></keybind>
+    <!-- Alt+F4 deshabilitado para evitar cerrar el navegador en modo Kiosk -->
   </keyboard>
 </openbox_config>
 RCEOF
@@ -642,6 +651,8 @@ fi
 
 echo "📦 Copiando aplicación y start_qa.sh ($START_QA_SRC)..."
 cp -r "$WORK_DIR/app" config/includes.chroot/opt/qa_suite/
+find config/includes.chroot/opt/qa_suite/app -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+find config/includes.chroot/opt/qa_suite/app -name "*.pyc" -delete 2>/dev/null || true
 cp "$START_QA_SRC" config/includes.chroot/opt/qa_suite/start_qa.sh
 chmod +x config/includes.chroot/opt/qa_suite/start_qa.sh
 

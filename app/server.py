@@ -251,9 +251,9 @@ class DiagnosticHandler(http.server.SimpleHTTPRequestHandler):
 
 def run_server(port=PORT):
     socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(('0.0.0.0', port), DiagnosticHandler) as httpd:
+    with socketserver.TCPServer(('127.0.0.1', port), DiagnosticHandler) as httpd:
         print(f'==================================================')
-        print(f'DIAGNOSTDONOR: http://localhost:{port}')
+        print(f'DIAGNOSTDONOR: http://127.0.0.1:{port}')
         print(f'==================================================')
         try:
             httpd.serve_forever()

@@ -132,7 +132,7 @@ SERVER_PID=$!
 
 # Wait for server to initialize and verify readiness
 for i in $(seq 1 40); do
-  if curl -s http://localhost:8080/ >/dev/null 2>&1; then
+  if curl -s http://127.0.0.1:8080/ >/dev/null 2>&1; then
     break
   fi
   sleep 0.05
@@ -152,7 +152,8 @@ CHROME_FLAGS="
   --autoplay-policy=no-user-gesture-required
   --disable-gesture-requirement-for-media-playback
   --allow-insecure-localhost
-  --unsafely-treat-insecure-origin-as-secure=http://localhost:8080
+  --unsafely-treat-insecure-origin-as-secure=http://127.0.0.1:8080,http://localhost:8080
+  --disable-dev-tools
   --disable-features=ChromeWhatsNewUI,Translate,MediaRouter,InPrivateNotification
   --disable-translate
   --disable-infobars
@@ -189,10 +190,11 @@ fi
 
 if [ -n "$CHROME_BIN" ]; then
     echo "[INFO] Abriendo interfaz en $CHROME_BIN (Kiosk Mode)..."
-    "$CHROME_BIN" $CHROME_FLAGS http://localhost:8080 &
+    while kill -0 "$SERVER_PID" 2>/dev/null; do
+        "$CHROME_BIN" $CHROME_FLAGS http://127.0.0.1:8080
+        sleep 0.5
+    done
 else
-    echo "[AVISO] No se encontro Chrome ni Chromium. Abre manualmente: http://localhost:8080"
+    echo "[AVISO] No se encontro Chrome ni Chromium. Abre manualmente: http://127.0.0.1:8080"
+    wait $SERVER_PID
 fi
-
-
-wait $SERVER_PID
