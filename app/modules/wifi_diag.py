@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """
 Network Diagnostic Module (Wi-Fi & Ethernet)
-Scans Wi-Fi networks, checks Ethernet physical port & cable link status,
-and tests network latency (ping).
+Scans Wi-Fi networks and checks Ethernet physical port, cable link status and
+RJ-45 loopback plugs.
+
+The kiosk never joins a network (firewall drops all non-loopback IP traffic and
+NetworkManager has no connection profiles), so these checks only use radio
+scans, sysfs link state and raw layer-2 frames; there is no internet test.
 """
 
 import os
 import subprocess
 import shutil
-import re
 import socket
 import select
 import struct
@@ -272,26 +275,11 @@ def get_wifi_status():
         except Exception:
             pass
 
-    # Quick ping test
-    ping_ok = False
-    ping_ms = 0.0
-    try:
-        ping_res = subprocess.run(['ping', '-c', '1', '-W', '2', '1.1.1.1'], capture_output=True, text=True, timeout=3)
-        if ping_res.returncode == 0:
-            ping_ok = True
-            match = re.search(r'time=([\d.]+)\s*ms', ping_res.stdout)
-            if match:
-                ping_ms = float(match.group(1))
-    except Exception:
-        pass
-
     return {
         'wifi_hardware_present': hardware_present or len(networks) > 0,
         'wifi_enabled': wifi_enabled,
         'connected_ssid': connected_ssid,
         'signal_quality': signal_quality,
-        'internet_ping_ok': ping_ok,
-        'ping_ms': ping_ms,
         'networks_count': len(networks),
         'nearby_networks': networks[:10],
         'ethernet': get_ethernet_status()

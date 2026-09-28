@@ -111,11 +111,7 @@ async function updateSpeakerVolume(val) {
   const volVal = document.getElementById("speaker-vol-val");
   if (volVal) volVal.innerText = `${val}%`;
   try {
-    await fetch("/api/volume", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ volume: parseInt(val) })
-    });
+    await apiPost("/api/volume", { volume: parseInt(val) });
   } catch (e) {
     console.warn("No se pudo fijar volumen en ALSA:", e);
   }

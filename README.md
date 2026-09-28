@@ -102,7 +102,7 @@ wget -O Aplicaciones/google-chrome-stable_current_amd64.deb https://dl.google.co
 * **Audio:** Barrido senoidal estéreo (canal izquierdo, derecho y ambos) con control de volumen del sistema.
 * **Micrófono con análisis de onda PCM/RMS:** Medidor de nivel (VU meter) en tiempo real y grabador loopback de 3 segundos con comprobación de amplitud para evitar falsos positivos en entornos sin micrófono o máquinas virtuales.
 * **Conectividad de red (Wi-Fi y Ethernet):**
-  * **Wi-Fi:** Escaneo de redes inalámbricas cercanas (SSID y nivel de señal) y prueba de ping a DNS público (`1.1.1.1`).
+  * **Wi-Fi:** Escaneo de redes inalámbricas cercanas (SSID y nivel de señal). El equipo nunca se conecta a ninguna red: la prueba valida la antena y el adaptador mediante el escaneo, sin conexión ni ping.
   * **Ethernet RJ-45:** Detección de puerto físico y validación del enlace por cable. Una vez probado con éxito, la aprobación en el checklist se mantiene fija de forma persistente aunque el técnico desconecte el cable para continuar con otras pruebas.
   * **Diagnóstico automático de Loopback (TX/RX):** Comprobación inmediata de conectores loopback RJ-45 (pines 1-3 y 2-6 puenteados) mediante tramas de prueba capa 2 (EtherType `0x88B5`) sin necesidad de switch o infraestructura de red externa.
 * **Bluetooth:** Detección del adaptador de radio y su dirección MAC.
@@ -113,10 +113,25 @@ wget -O Aplicaciones/google-chrome-stable_current_amd64.deb https://dl.google.co
 * Protección térmica con tolerancia a picos normales de Turbo Boost (PL2) y parada automática de emergencia si la CPU sostiene >=100°C por más de 4 segundos o supera los 104°C.
 
 ### Seguridad y blindaje corporativo (Modo Kiosk)
-* **Aislamiento de red:** El servidor backend REST escucha exclusivamente en `127.0.0.1:8080`, impidiendo el acceso o escaneo de puertos desde la red corporativa al conectar cables de red o Wi-Fi.
-* **Operación 100% local (Air-Gap):** Sin dependencias externas de internet; utiliza tipografía nativa del sistema operativo (`system-ui` / `ui-monospace`) con cero tráfico saliente.
-* **Bloqueo de consolas virtuales:** Directivas X11 (`DontVTSwitch` y `DontZap`) que impiden abandonar el entorno gráfico mediante combinaciones `Ctrl + Alt + F1..F6` o `Ctrl + Alt + Backspace`.
-* **Bloqueo de atajos y consola de desarrollador:** Atajo `Alt + F4` anulado en el gestor de ventanas Openbox, DevTools (`F12`, `Ctrl + Shift + I`, inspeccionar) deshabilitadas mediante directivas gestionadas de Chrome y bucle supervisor (watchdog) para relanzar la interfaz automáticamente si el proceso se interrumpe.
+El objetivo es que el equipo solo pueda usarse para el diagnóstico: sin red, sin navegar fuera de la app y sin acceso a una terminal.
+
+* **Sin conexión a red:**
+  * Firewall `nftables` activo desde el arranque que descarta todo el tráfico IP (IPv4/IPv6) que no sea loopback. IPv6 deshabilitado por `sysctl`.
+  * NetworkManager sin perfiles ni conexiones automáticas (`no-auto-default=*`) y sin chequeo de conectividad: al enchufar un cable no se pide DHCP.
+  * El escaneo Wi-Fi, la detección de enlace Ethernet y el test de loopback RJ-45 (tramas capa 2) siguen funcionando porque no usan IP.
+  * El backend escucha exclusivamente en `127.0.0.1:8080`.
+* **Operación 100% local (Air-Gap):** Sin dependencias externas de internet; tipografía nativa del sistema operativo (`system-ui` / `ui-monospace`) y una `Content-Security-Policy` que impide a la interfaz cargar o contactar cualquier recurso fuera del servidor local.
+* **Chrome bloqueado en la app:**
+  * Directivas gestionadas con lista blanca de URL: solo se puede abrir `http://127.0.0.1:8080` (ni sitios web, ni `file://`, ni `chrome://`).
+  * Sin diálogos de archivo, descargas, impresión, DevTools, extensiones, perfiles invitados ni modo incógnito.
+  * La interfaz además bloquea arrastrar y soltar enlaces/archivos, el menú contextual del navegador y los atajos de navegación (`Ctrl + O/P/S/U/N/T`, `Alt + ←/→`, `F5`, etc.).
+  * Watchdog que relanza Chrome si se cierra y reinicia el backend si se detiene.
+* **Sin acceso a terminal:**
+  * La ISO no incluye emulador de terminal (se elimina `xterm`, que el metapaquete `xorg` instala como dependencia) y el lanzador corre en segundo plano, sin ventana de consola.
+  * Openbox sin atajos de teclado (`Alt + F4`, `Alt + Tab`…) y con el menú de escritorio vacío (el menú por defecto permite abrir una terminal).
+  * Sin consolas virtuales: directivas X11 `DontVTSwitch` y `DontZap`, sin gettys en `tty2..tty6`, `Ctrl + Alt + Supr` y SysRq deshabilitados. Si la sesión gráfica termina, vuelve a iniciarse en lugar de caer a una shell.
+  * GRUB protegido: las entradas arrancan sin contraseña, pero editar los parámetros del kernel (`e`) o abrir la consola (`c`) requiere la contraseña de administrador. isolinux (BIOS) no permite editar parámetros.
+* **API local protegida:** Todas las acciones (PSID revert, borrado criptográfico, apagado, estrés, volumen, Bluetooth) exigen un token de sesión que el servidor inyecta en la página. Se rechazan las peticiones con `Host` u `Origin` ajenos y los dispositivos objetivo se validan (solo discos completos; nunca el pendrive de arranque).
 * **Control de arranque:** Validación obligatoria de UEFI Secure Boot activo y módulo TPM 2.0 funcional al iniciar.
 
 ### Checklist y control de energía
@@ -135,7 +150,7 @@ diagnost-donor/
 ├── app/                          # Aplicación de diagnóstico
 │   ├── modules/                  # Módulos Python (batería, CPU, RAM, discos, wifi, bluetooth, stress, etc.)
 │   ├── server.py                 # Servidor local HTTP REST (puerto 8080)
-│   └── static/                   # Frontend web (HTML, CSS y JS modular)
+│   └── static/                   # Frontend web (HTML, CSS y JS modular, sin build)
 │       ├── index.html
 │       ├── style.css
 │       ├── vendor/               # Dependencias offline (jsQR, zxing)
@@ -147,6 +162,7 @@ diagnost-donor/
 │   ├── start_qa.sh               # Script de inicio en el entorno Live con healthcheck
 │   └── VERSION                   # Archivo de control de versión
 ├── ISOs/                         # Directorio donde se guardan las ISOs compiladas
+├── tests/                        # Tests unitarios (unittest, sin dependencias)
 └── README.md
 ```
 
@@ -166,6 +182,13 @@ python3 app/server.py
 bash builder/start_qa.sh
 ```
 
+> Fuera de la ISO (sin `boot=live` en la línea de comandos del kernel), `start_qa.sh` omite el firewall y la verificación de Secure Boot/TPM, para no bloquear la red ni reiniciar el equipo de desarrollo.
+
+### Ejecutar los tests
+```bash
+python3 -m unittest discover -s tests -v
+```
+
 ### Compilar una nueva imagen ISO
 El proceso de compilación se ejecuta dentro de un contenedor Docker con Ubuntu 24.04:
 
@@ -176,6 +199,11 @@ sudo ./build_live_iso.sh
 
 * **Versionado inteligente:** Si la versión definida en el código es mayor a la última ISO existente en `ISOs/`, se compila directamente con esa versión. Si es menor o igual, suma automáticamente `+1` a la última ISO creada.
 * **Seguridad y compatibilidad:** Incluye montaje automático de certificados CA del host para descargas seguras por repositorios HTTPS.
+* **Contraseña de GRUB:** Para poder editar parámetros de arranque en el menú de GRUB (usuario `admin`), define la contraseña al compilar:
+  ```bash
+  sudo GRUB_ADMIN_PASSWORD='tu-contraseña' ./build_live_iso.sh
+  ```
+  Si no se define, se usa una contraseña aleatoria que no se guarda y la edición queda deshabilitada de forma permanente en esa ISO.
 
 ---
 

@@ -7,7 +7,8 @@ Supports isolated, non-blocking stress testing for:
   - SSD (Safe temporary buffered/unbuffered I/O speed and integrity test)
   - GPU / iGPU (Coordination and telemetry during WebGL 3D load)
 
-Includes automatic thermal abort (95°C), manual abort, and comprehensive error handling.
+Includes automatic thermal abort (CPU >= 100°C sustained for 4+ s, or any reading >= 104°C),
+manual abort, and comprehensive error handling.
 """
 
 import os
