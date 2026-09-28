@@ -74,10 +74,16 @@ wget -O Aplicaciones/google-chrome-stable_current_amd64.deb https://dl.google.co
   * Soporte para umbrales de conservación en BIOS (ASUS, Lenovo, Dell a 60% u 80%).
   * Periodo de gracia para la negociación eléctrica de controladores EC/PMIC al enchufar el cargador.
 
-### Temperaturas y ventilación
-* Sensores térmicos dedicados de silicio (`coretemp` para Intel, `k10temp`/`zenpower` para AMD), filtrando sensores periféricos.
-* Lectura de RPM de ventiladores (soporte para Lenovo ThinkPad ACPI, ASUS y HP WMI).
-* Clasificación dinámica en tiempo real: Normal (<75°C), Carga / Estable (<92°C), Caliente / Turbo (<100°C) y Límite Térmico (>=100°C).
+### Temperaturas, ventilación y salud térmica
+* Sensores térmicos dedicados de silicio (`coretemp` para Intel, `k10temp`/`zenpower` para AMD, prefiriendo `Tdie` sobre `Tctl`), filtrando sensores periféricos.
+* Lectura de RPM de ventiladores (soporte para Lenovo ThinkPad ACPI, ASUS y HP WMI). Si la BIOS no expone un valor, se indica "Sin lectura"; nunca se muestran valores inventados.
+* **Detección de throttling térmico** (equivalente a *Core/Package Thermal Throttling* de HWiNFO64):
+  * Intel: contadores del kernel `/sys/devices/system/cpu/cpuN/thermal_throttle/` (eventos y tiempo acumulado desde el arranque) y, si está disponible, los MSR de estado térmico para detectar throttling y PROCHOT en este momento (lectura permitida con Secure Boot).
+  * El límite por potencia (PL1/PL2) no se considera un problema: es el comportamiento normal de una laptop y no se corrige con limpieza.
+  * AMD: el kernel no expone contadores de throttling; la evaluación se hace por temperatura.
+* **Recomendación de mantenimiento (limpieza y cambio de pasta térmica):**
+  * *Vista general:* recuadro "Salud térmica" con el estado de throttling y el TjMax. Recomienda mantenimiento si la CPU se mantiene en ≥95 °C durante 60 s, o si está sobre 70 °C en reposo durante 60 s (polvo o pasta seca). Si hubo throttling desde el arranque, sugiere confirmarlo con la prueba de estrés.
+  * *Prueba de estrés (fase CPU):* se descartan los primeros 30 s de Turbo/PL2, donde los picos altos son normales. Se recomienda limpieza y cambio de pasta si la CPU se mantiene en **≥95 °C durante al menos la mitad de la carga sostenida**, si hay throttling térmico significativo (≥3 s o ≥10 % del tiempo), si la prueba se aborta por temperatura o si el ventilador marca 0 RPM con la CPU sobre 80 °C. La prueba rápida da un resultado preliminar; para confirmar conviene usar el nivel Media o Profunda.
 
 ### Almacenamiento, diagnóstico LBA, vida útil y desbloqueo SSD
 * **Evaluación de vida útil y desgaste (Endurance):**
@@ -111,6 +117,7 @@ wget -O Aplicaciones/google-chrome-stable_current_amd64.deb https://dl.google.co
 * Carga multihilo configurable para CPU, memoria RAM, lecturas/escrituras en SSD y renderizado 3D WebGL.
 * Duraciones: Rápida (~2.5 min), Media (~6 min) o Profunda (~15 min).
 * Protección térmica con tolerancia a picos normales de Turbo Boost (PL2) y parada automática de emergencia si la CPU sostiene >=100°C por más de 4 segundos o supera los 104°C.
+* Informe final con la evaluación del sistema de enfriamiento y la recomendación de limpieza / cambio de pasta térmica (ver *Temperaturas, ventilación y salud térmica*).
 
 ### Seguridad y blindaje corporativo (Modo Kiosk)
 El objetivo es que el equipo solo pueda usarse para el diagnóstico: sin red, sin navegar fuera de la app y sin acceso a una terminal.

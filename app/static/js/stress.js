@@ -82,11 +82,10 @@ async function pollStressStatus() {
     const fill = document.getElementById("stress-progress-fill");
     const logConsole = document.getElementById("stress-log-console");
 
-    const curTempInt = Math.round(Number(data.current_temp_c) || 0);
-    const maxTempInt = Math.round(Number(data.max_temp_c) || 0);
+    const fmtTemp = v => (v === null || v === undefined) ? "N/D" : `${Math.round(Number(v))} °C`;
 
-    if (tempVal) tempVal.innerText = `${curTempInt} °C`;
-    if (maxTempVal) maxTempVal.innerText = `${maxTempInt} °C`;
+    if (tempVal) tempVal.innerText = fmtTemp(data.current_temp_c);
+    if (maxTempVal) maxTempVal.innerText = fmtTemp(data.max_temp_c);
 
     if (data.is_running) {
       setStressUiState(true);
@@ -178,8 +177,35 @@ function renderStressFinalReport(data) {
       ${itemsHtml || '<p style="color: #94a3b8; font-size: 0.8rem;">No se completaron componentes.</p>'}
     </div>
     <div style="margin-top: 0.75rem; font-size: 0.8rem; color: #c4b5fd; display: flex; justify-content: space-between;">
-      <span>Temperatura máxima alcanzada: <strong>${Math.round(Number(data.max_temp_c) || 0)} °C</strong></span>
+      <span>Temperatura máxima alcanzada: <strong>${data.max_temp_c === null || data.max_temp_c === undefined ? 'N/D' : Math.round(Number(data.max_temp_c)) + ' °C'}</strong></span>
       <span>Estado: <strong>${data.aborted ? 'Interrumpido' : 'Superado'}</strong></span>
+    </div>
+    ${renderThermalAssessment(data.thermal_assessment)}
+  `;
+}
+
+// Cooling verdict from the CPU phase: cleaning / thermal paste recommendation.
+function renderThermalAssessment(a) {
+  if (!a) return "";
+  const titles = {
+    ok: "Enfriamiento correcto",
+    watch: "Temperatura elevada: vigilar",
+    clean: "Mantenimiento recomendado: limpieza y cambio de pasta térmica",
+    unknown: "Evaluación térmica no disponible"
+  };
+  const metrics = [];
+  if (a.sustained_avg_c !== null && a.sustained_avg_c !== undefined) metrics.push(`Promedio sostenido: <strong>${a.sustained_avg_c} °C</strong>`);
+  if (a.sustained_hot_pct !== null && a.sustained_hot_pct !== undefined) metrics.push(`Tiempo ≥${Math.round(a.hot_threshold_c)} °C: <strong>${a.sustained_hot_pct}%</strong>`);
+  if (a.throttle && a.throttle.supported) metrics.push(`Throttling térmico: <strong>${a.throttle.events ? `${a.throttle.events} eventos (${(a.throttle.time_ms / 1000).toFixed(1)} s)` : 'No'}</strong>`);
+  if (a.tjmax_c) metrics.push(`TjMax: <strong>${a.tjmax_c} °C</strong>`);
+  if (a.avg_mhz) metrics.push(`Frecuencia sostenida: <strong>${a.avg_mhz} MHz</strong>${a.base_mhz ? ` (base ${a.base_mhz})` : ''}`);
+
+  return `
+    <div class="thermal-health level-${a.level}" style="margin-top: 0.75rem;">
+      <div class="th-title"><span>${titles[a.level] || titles.unknown}</span>${a.preliminary ? '<span style="font-weight: 500; color: #94a3b8;">Preliminar</span>' : ''}</div>
+      ${a.recommendation ? `<div class="th-reco">${escapeHtml(a.recommendation)}</div>` : ''}
+      <ul>${(a.reasons || []).map(r => `<li>${escapeHtml(r)}</li>`).join("")}</ul>
+      ${metrics.length ? `<div class="th-meta">${metrics.join(" · ")}</div>` : ''}
     </div>
   `;
 }

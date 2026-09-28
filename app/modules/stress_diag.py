@@ -9,6 +9,10 @@ Supports isolated, non-blocking stress testing for:
 
 Includes automatic thermal abort (CPU >= 100°C sustained for 4+ s, or any reading >= 104°C),
 manual abort, and comprehensive error handling.
+
+The CPU phase also evaluates the cooling system (thermal_health): sustained
+temperature after the Turbo window, thermal throttling counters and fan RPM,
+and reports whether cleaning / new thermal paste is recommended.
 """
 
 import os
@@ -20,6 +24,9 @@ import random
 import threading
 import subprocess
 from datetime import datetime
+
+import thermal_health
+from thermal import read_fan_rpms
 
 # Global singleton runner
 _stress_runner = None
@@ -40,6 +47,9 @@ class HardwareStressRunner:
         self.logs = []
         self.results = {}
         self.max_temp_c = 0
+        self.thermal_abort = False
+        self.thermal_assessment = None
+        self._no_sensor_logged = False
         self.worker_thread = None
 
         # Determine total duration based on level and selected components
@@ -65,7 +75,13 @@ class HardwareStressRunner:
             self.logs.pop(0)
 
     def get_cpu_temp(self):
-        """Read true CPU temperature with dedicated hardware sensor priority."""
+        """Read true CPU temperature with dedicated hardware sensor priority.
+
+        Returns None when no temperature sensor is available (never a made-up value).
+        """
+        temp, _ = thermal_health.read_cpu_temp()
+        if temp is not None:
+            return temp
         cpu_temps = []
         fallback_temps = []
         try:
@@ -143,11 +159,16 @@ class HardwareStressRunner:
             return max(cpu_temps)
         if fallback_temps:
             return max(fallback_temps)
-        return 45.0
+        return None
 
     def check_thermal_safety(self):
         """Returns False if critical temperature is reached."""
         current_temp = self.get_cpu_temp()
+        if current_temp is None:
+            if not self._no_sensor_logged:
+                self._no_sensor_logged = True
+                self.log("[AVISO TERMICO] No hay sensor de temperatura de CPU: la protección térmica automática no está disponible.", "warning")
+            return True
         if current_temp > self.max_temp_c:
             self.max_temp_c = current_temp
 
@@ -155,6 +176,7 @@ class HardwareStressRunner:
         if current_temp >= 104.0:
             self.log(f"[ALERTA CRITICA] Temperatura de CPU a {current_temp:.1f}°C (Excede limite maximo de 104°C). Abortando por proteccion.", "error")
             self.aborted = True
+            self.thermal_abort = True
             return False
 
         # 2. Sustained critical heat protection (if >= 100°C for 4+ consecutive seconds)
@@ -163,6 +185,7 @@ class HardwareStressRunner:
             if self.critical_temp_counter >= 4:
                 self.log(f"[ALERTA CRITICA] Temperatura de CPU sostenida a {current_temp:.1f}°C durante mas de 4s. Abortando por seguridad.", "error")
                 self.aborted = True
+                self.thermal_abort = True
                 return False
             else:
                 self.log(f"[AVISO TERMICO] CPU a {current_temp:.1f}°C (Pico de Turbo Boost). Ventiladores respondiendo...", "warning")
@@ -177,7 +200,9 @@ class HardwareStressRunner:
         self.start_time = time.time()
         self.results = {}
         self.logs = []
-        self.max_temp_c = self.get_cpu_temp()
+        self.thermal_abort = False
+        self.thermal_assessment = None
+        self.max_temp_c = self.get_cpu_temp() or 0
         self.log(f"[INICIO] Iniciando suite de estrés nivel: {self.level.upper()} ({self.total_duration_sec}s total estimado).", "step")
 
         self.worker_thread = threading.Thread(target=self._run_all_tests, daemon=True)
@@ -212,6 +237,18 @@ class HardwareStressRunner:
             # Finalize
             total_elapsed = round(time.time() - self.start_time, 1)
             self.progress_percent = 100
+
+            if self.aborted and self.thermal_abort and "cpu" not in self.results:
+                # Aborted by heat outside the CPU phase: still report the cooling verdict.
+                self.thermal_assessment = thermal_health.evaluate_stress_samples(
+                    [], {'supported': False}, thermal_abort=True)
+                self.thermal_assessment.update({
+                    'level': thermal_health.LEVEL_CLEAN,
+                    'title': 'Enfriamiento insuficiente',
+                    'recommendation': thermal_health.RECOMMENDATION_CLEAN,
+                    'reasons': ['La prueba se detuvo por protección térmica (CPU ≥100 °C sostenido o ≥104 °C).'],
+                    'peak_c': round(self.max_temp_c, 1),
+                })
 
             if self.aborted:
                 self.log(f"[INFO] Prueba de estrés interrumpida a los {total_elapsed}s. Temp Máx: {self.max_temp_c:.1f}°C.", "warning")
@@ -268,17 +305,42 @@ class HardwareStressRunner:
 
         start_comp = time.time()
         initial_temp = self.get_cpu_temp()
-        max_seen_temp = initial_temp
+        max_seen_temp = initial_temp or 0
+        throttle_before = thermal_health.read_throttle_counters()
+        tjmax = thermal_health.read_tjmax()
+        _, base_mhz = thermal_health.read_cpu_freq()
+        samples = []
+        fan_rpms = []
+        fans_exposed = False
+        hot_logged = False
 
         while (time.time() - start_comp) < duration_sec:
             if self.aborted or not self.check_thermal_safety():
                 break
             cur_t = self.get_cpu_temp()
-            if cur_t > max_seen_temp:
+            if cur_t is not None and cur_t > max_seen_temp:
                 max_seen_temp = cur_t
+            mhz, _ = thermal_health.read_cpu_freq()
+            t_rel = time.time() - start_comp
+            samples.append({"t": round(t_rel, 1), "temp": cur_t, "mhz": mhz})
+            rpms = read_fan_rpms()
+            if rpms is not None:
+                fans_exposed = True
+                fan_rpms.append(max(rpms))
+
+            if (not hot_logged and cur_t is not None and cur_t >= thermal_health.HOT_SUSTAINED_C
+                    and t_rel >= thermal_health.TURBO_WINDOW_SEC):
+                hot_logged = True
+                self.log(f"[AVISO TERMICO] CPU a {cur_t:.0f}°C tras la ventana Turbo: evaluando si la temperatura se mantiene.", "warning")
 
             self._update_overall_progress(start_comp, duration_sec, "cpu")
             time.sleep(1.0)
+
+        throttle = thermal_health.throttle_delta(throttle_before, thermal_health.read_throttle_counters())
+        assessment = thermal_health.evaluate_stress_samples(
+            samples, throttle, tjmax=tjmax, base_mhz=base_mhz,
+            thermal_abort=self.thermal_abort, fans=fan_rpms if fans_exposed else None)
+        self.thermal_assessment = assessment
 
         # Cleanup CPU workers
         if stress_proc:
@@ -296,14 +358,21 @@ class HardwareStressRunner:
         self.results["cpu"] = {
             "passed": passed,
             "cores_tested": num_cpus,
-            "initial_temp_c": int(round(initial_temp)),
-            "max_temp_c": int(round(max_seen_temp)),
+            "initial_temp_c": int(round(initial_temp)) if initial_temp is not None else None,
+            "max_temp_c": int(round(max_seen_temp)) if max_seen_temp else None,
             "duration_sec": round(time.time() - start_comp, 1),
-            "message": f"CPU Estable a {int(round(max_seen_temp))}°C ({num_cpus} Núcleos OK)" if passed else "CPU con alta temperatura o abortada"
+            "message": (f"CPU Estable a {int(round(max_seen_temp))}°C ({num_cpus} Núcleos OK)" if max_seen_temp
+                        else f"CPU Estable ({num_cpus} Núcleos OK, sin sensor de temperatura)") if passed else "CPU con alta temperatura o abortada",
+            "thermal": assessment,
         }
 
+        log_type = {"clean": "error", "watch": "warning", "ok": "success"}.get(assessment["level"], "info")
+        self.log(f"[TERMICO] {assessment['title']}. {assessment['recommendation']}", log_type)
+        for reason in assessment["reasons"]:
+            self.log(f"[TERMICO] {reason}", "info")
+
         if passed:
-            self.log(f"[CPU] Prueba completada: 100% de núcleos estables sin caídas térmicas. Temp pico: {int(round(max_seen_temp))}°C.", "success")
+            self.log(f"[CPU] Prueba completada: 100% de núcleos estables (sin errores de cálculo). Temp pico: {int(round(max_seen_temp))}°C.", "success")
         else:
             self.log(f"[CPU] Prueba finalizada. Temp pico: {int(round(max_seen_temp))}°C.", "warning")
 
@@ -516,7 +585,7 @@ class HardwareStressRunner:
 
     def get_status(self):
         current_temp = self.get_cpu_temp()
-        if current_temp > self.max_temp_c:
+        if current_temp is not None and current_temp > self.max_temp_c:
             self.max_temp_c = current_temp
 
         return {
@@ -527,10 +596,11 @@ class HardwareStressRunner:
             "current_component": self.current_component,
             "total_duration_sec": self.total_duration_sec,
             "elapsed_sec": self.elapsed_sec if self.is_running else (int(time.time() - self.start_time) if self.start_time else 0),
-            "current_temp_c": int(round(current_temp)),
-            "max_temp_c": int(round(self.max_temp_c)),
+            "current_temp_c": int(round(current_temp)) if current_temp is not None else None,
+            "max_temp_c": int(round(self.max_temp_c)) if self.max_temp_c else None,
             "logs": self.logs[-30:],  # Return recent 30 logs
-            "results": self.results
+            "results": self.results,
+            "thermal_assessment": self.thermal_assessment,
         }
 
 
@@ -565,10 +635,11 @@ def get_stress_status():
                 "current_component": None,
                 "total_duration_sec": 0,
                 "elapsed_sec": 0,
-                "current_temp_c": 45.0,
-                "max_temp_c": 45.0,
+                "current_temp_c": None,
+                "max_temp_c": None,
                 "logs": [],
-                "results": {}
+                "results": {},
+                "thermal_assessment": None
             }
         return _stress_runner.get_status()
 

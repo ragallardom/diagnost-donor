@@ -1414,3 +1414,44 @@ body.stealth-purple-theme {
   border: 1px solid var(--border-color);
 }
 
+
+/* Thermal health / cleaning recommendation */
+.thermal-health {
+  margin-top: 0.6rem;
+  padding: 0.6rem 0.8rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  border-left-width: 4px;
+  background-color: var(--bg-dark);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+.thermal-health .th-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-weight: 700;
+  font-size: 0.82rem;
+  margin-bottom: 0.25rem;
+}
+.thermal-health .th-meta {
+  color: #94a3b8;
+  margin-top: 0.3rem;
+}
+.thermal-health ul {
+  margin: 0.35rem 0 0 1rem;
+  padding: 0;
+  color: #cbd5e1;
+}
+.thermal-health .th-reco {
+  margin-top: 0.35rem;
+  font-weight: 600;
+}
+.thermal-health.level-ok { border-left-color: var(--success-green); }
+.thermal-health.level-ok .th-title { color: var(--success-green); }
+.thermal-health.level-watch { border-left-color: var(--warning-amber); }
+.thermal-health.level-watch .th-title { color: var(--warning-amber); }
+.thermal-health.level-clean { border-left-color: var(--danger-red); background-color: rgba(239, 68, 68, 0.08); }
+.thermal-health.level-clean .th-title { color: #fca5a5; }
+.thermal-health.level-unknown { border-left-color: #64748b; }
+.thermal-health.level-unknown .th-title { color: #94a3b8; }

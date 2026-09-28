@@ -116,7 +116,7 @@ fi
 echo "[INICIO] Iniciando Suite de Diagnostico de Hardware (ThinkPad & EliteBook QA)..."
 
 # Preparar módulos de drivers Wi-Fi modernos, GPU y puertos Type-C/HDMI ThinkPad T14 Gen 5/6 en paralelo
-for mod in thinkpad_acpi intel_vsec ucsi_acpi typec typec_displayport thunderbolt xe i915 amdgpu drm_kms_helper iwlwifi iwlmvm ath12k_pci ath12k ath11k_pci ath11k rtw89_8852be rtw89_8852ce rtw89_8922ae rtw89_pci rtw89_core mt7921e mt7922e mt7925e rtw88_8822ce; do
+for mod in msr coretemp k10temp thinkpad_acpi intel_vsec ucsi_acpi typec typec_displayport thunderbolt xe i915 amdgpu drm_kms_helper iwlwifi iwlmvm ath12k_pci ath12k ath11k_pci ath11k rtw89_8852be rtw89_8852ce rtw89_8922ae rtw89_pci rtw89_core mt7921e mt7922e mt7925e rtw88_8822ce; do
   modprobe "$mod" 2>/dev/null &
 done
 
