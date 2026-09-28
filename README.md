@@ -183,7 +183,7 @@ sudo ./build_live_iso.sh
 
 ### Linux (`dd`)
 ```bash
-sudo dd if=ISOs/diagnost-donor_1.1.12_linux-live.iso of=/dev/sdX bs=4M status=progress conv=fsync
+sudo dd if=ISOs/diagnost-donor_1.1.15_linux-live.iso of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 *(Reemplaza `/dev/sdX` por la unidad correspondiente a tu pendrive).*
 

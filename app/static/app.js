@@ -369,14 +369,16 @@ function updateSystemTab(sys) {
 
   const serialStr = sys.serial && sys.serial !== 'N/A' ? sys.serial : 'N/A';
   document.getElementById("header-serial").innerText = `S/N: ${serialStr}`;
-  document.getElementById("sys-model").innerText = sys.model || "Detectando Modelo...";
-  document.getElementById("quick-model").innerText = formatModelShortName(sys.model);
+  const cardModel = (sys.model || "").replace(/\b(HP|LENOVO|DELL|ASUS|ACER)\s+\1\b/gi, "$1").trim();
+  document.getElementById("sys-model").innerText = cardModel || "Detectando Modelo...";
+  document.getElementById("quick-model").innerText = formatModelShortName(cardModel);
   document.getElementById("sys-vendor").innerText = sys.vendor || "--";
 
   function formatModelShortName(modelStr) {
     if (!modelStr || ["--", "N/A", "To be filled by O.E.M.", "Default string", "System Product Name"].includes(modelStr.trim())) return "--";
     let s = modelStr.trim();
-    s = s.replace(/^(LENOVO|HP|Hewlett-Packard|Dell\s+Inc\.?|Dell|ASUSTeK\s+COMPUTER\s+INC\.?|ASUS|Acer|Apple\s+Inc\.?|Apple|Microsoft\s+Corporation|Micro-Star\s+International\s+Co\.,\s+Ltd\.?|MSI)\s*[:\-]?\s*/i, "");
+    s = s.replace(/\s*\([^)]*\)/g, "").trim();
+    s = s.replace(/^(?:(LENOVO|HP|Hewlett-Packard|Dell\s+Inc\.?|Dell|ASUSTeK\s+COMPUTER\s+INC\.?|ASUS|Acer|Apple\s+Inc\.?|Apple|Microsoft\s+Corporation|Micro-Star\s+International\s+Co\.,\s+Ltd\.?|MSI)\s*[:\-]?\s*)+/i, "");
     s = s.replace(/^[0-9A-Z]{4,10}\s+(ThinkPad|EliteBook|ProBook|Latitude|Precision|XPS|ZBook)/i, "$1");
     const tpX1 = s.match(/ThinkPad\s+(X1\s+(?:Carbon|Yoga|Nano|Extreme|Titanium)(?:\s+(?:Gen\s+\d+|\d+th\s+Gen))?)/i);
     if (tpX1) return tpX1[1].replace(/(\d+)th\s+Gen/i, "Gen $1");
@@ -442,12 +444,14 @@ function updateBatteryTab(batteries) {
   const bat = batteries[0];
   const statusColor = bat.has_charge_error ? "#ef4444" : (bat.is_charging ? "#10b981" : (bat.is_full ? "#3b82f6" : (bat.is_conservation ? "#a855f7" : "")));
 
+  const cleanStatus = (bat.status_es || bat.status || "").replace(/\s*\(\d+%\)/g, "").trim();
+
   const qBat = document.getElementById("quick-bat");
   if (qBat) qBat.innerText = `${bat.capacity_percent}%`;
 
   const qCharge = document.getElementById("quick-charge-status");
   if (qCharge) {
-    qCharge.innerText = bat.status_es || bat.status;
+    qCharge.innerText = cleanStatus;
     qCharge.style.color = statusColor || "";
   }
 
@@ -456,7 +460,7 @@ function updateBatteryTab(batteries) {
 
   const bStatus = document.getElementById("bat-status-text");
   if (bStatus) {
-    bStatus.innerText = bat.status_es || bat.status;
+    bStatus.innerText = cleanStatus;
     bStatus.style.color = statusColor || "";
   }
 
@@ -522,6 +526,8 @@ function updateThermalTab(thermal) {
   }
 }
 
+let _lastInternalStorageJsonApp = "";
+
 // UPDATE STORAGE (SSD)
 function updateStorageTab(storage) {
   if (!storage) return;
@@ -535,6 +541,13 @@ function updateStorageTab(storage) {
 
   const container = document.getElementById("storage-list");
   if (!container) return;
+
+  const currentJson = JSON.stringify(internalList);
+  const isHoveringTip = Boolean(container.querySelector('.info-tip-wrap:hover'));
+  if (currentJson === _lastInternalStorageJsonApp || isHoveringTip) {
+    return;
+  }
+  _lastInternalStorageJsonApp = currentJson;
 
   if (internalList.length === 0) {
     container.innerHTML = `
@@ -600,17 +613,38 @@ function updateStorageTab(storage) {
       enduranceHtml = `
         <div class="card-spec-item">
           <span class="spec-label">Vida útil y desgaste (Endurance)</span>
-          <div class="spec-value spec-value-detail" style="font-family: var(--font-mono); font-size: 0.82rem; line-height: 1.45;">
-            Total Escrito (TBW): <span style="font-weight: 600; color: var(--text-main);">${s.endurance.tbw_str}</span><br>
+          <div class="spec-value spec-value-detail" style="font-family: var(--font-mono); font-size: 0.82rem; line-height: 1.55;">
+            Total Escrito (TBW): <span style="font-weight: 600; color: var(--text-main);">${s.endurance.tbw_str}</span>
+            <span class="info-tip-wrap">
+              <span class="info-tip-icon">i</span>
+              <span class="info-tip-box">
+                <strong style="color: #f1f5f9; display: block; margin-bottom: 0.25rem;">Total Escrito - TBW (SSD):</strong>
+                <span style="display: block; color: #94a3b8; margin-bottom: 0.35rem; font-size: 0.72rem;">
+                  Terabytes Escritos (TBW): volumen total acumulado de datos grabados en las celdas flash desde su fabricación.
+                </span>
+                <strong style="color: #e2e8f0; display: block; margin-bottom: 0.2rem;">Límites típicos según tamaño:</strong>
+                • 128 - 256 GB: 75 a 150 TBW<br>
+                • 512 GB: 150 a 300 TBW<br>
+                • 1 TB: 300 a 600 TBW<br>
+                • 2 TB: 600 a 1200 TBW<br>
+                <span style="display: block; color: #38bdf8; margin-top: 0.3rem; font-size: 0.69rem;">
+                  *Superar el límite del fabricante aumenta el riesgo de fallos o modo solo lectura.
+                </span>
+              </span>
+            </span><br>
             Ciclos P/E: <span style="font-weight: 600; color: var(--text-main);">${s.endurance.pe_cycles_str}</span>
             <span class="info-tip-wrap">
               <span class="info-tip-icon">i</span>
               <span class="info-tip-box">
-                <strong style="color: #f1f5f9; display: block; margin-bottom: 0.25rem;">Referencia de ciclos P/E (SSD):</strong>
-                • 0 a 100: Excelente<br>
-                • 100 a 300: Muy bueno<br>
-                • 300 a 600: Uso moderado<br>
-                • Más de 800: Desgaste alto
+                <strong style="color: #f1f5f9; display: block; margin-bottom: 0.25rem;">Ciclos P/E (SSD):</strong>
+                <span style="display: block; color: #94a3b8; margin-bottom: 0.35rem; font-size: 0.72rem;">
+                  Ciclos Programación/Borrado: promedio de veces que cada bloque de memoria física ha sido borrado y reescrito.
+                </span>
+                <strong style="color: #e2e8f0; display: block; margin-bottom: 0.2rem;">Referencia de desgaste:</strong>
+                • 0 a 100: Excelente (prácticamente nuevo)<br>
+                • 100 a 300: Muy bueno (vida útil óptima)<br>
+                • 300 a 600: Uso moderado / normal<br>
+                • Más de 800: Desgaste alto (memorias TLC/QLC toleran 600 - 1500 ciclos)
               </span>
             </span>
           </div>
@@ -744,7 +778,9 @@ function updateWifiTab(wifi) {
     const ethCarrier = document.getElementById("eth-carrier-text");
     const ethLoopback = document.getElementById("eth-loopback-text");
 
-    if (eth.present && eth.connected) {
+    const isConnected = eth.present && (eth.connected || eth.loopback_verified);
+
+    if (isConnected) {
       markCheckpassed("chk-eth", "ETHERNET");
       if (ethStatus) {
         ethStatus.innerText = "Cable conectado";
@@ -758,15 +794,11 @@ function updateWifiTab(wifi) {
         ethCarrier.innerText = "Enlace activo";
         ethCarrier.style.color = "var(--success-green)";
       }
-      if (ethLoopback && eth.primary) {
-        ethLoopback.innerText = eth.primary.loopback_label || "Enlace activo";
-        if (eth.primary.loopback_status === "verified") {
-          ethLoopback.style.color = "var(--success-green)";
-        } else {
-          ethLoopback.style.color = "var(--text-main)";
-        }
+      if (ethLoopback) {
+        ethLoopback.innerText = "Enlace activo";
+        ethLoopback.style.color = "var(--success-green)";
       }
-    } else if (eth.present && !eth.connected) {
+    } else if (eth.present && !eth.connected && !eth.loopback_verified) {
       unmarkCheckpassed("chk-eth", "Ethernet");
       if (ethStatus) {
         ethStatus.innerText = "Puerto disponible";
@@ -1210,6 +1242,10 @@ async function startCamera() {
     const setCamPassed = () => {
       if (video.videoWidth && video.videoHeight) {
         resInfo.innerText = `Res: ${video.videoWidth}x${video.videoHeight}`;
+        const container = video.closest(".camera-preview-container");
+        if (container) {
+          container.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
+        }
       }
       markCheckpassed("chk-camera", "CÁMARA");
     };
@@ -1242,7 +1278,11 @@ function stopCamera() {
     cameraStream = null;
   }
   const video = document.getElementById("camera-video");
-  if (video) video.srcObject = null;
+  if (video) {
+    video.srcObject = null;
+    const container = video.closest(".camera-preview-container");
+    if (container) container.style.aspectRatio = "16 / 9";
+  }
   const overlay = document.getElementById("cam-overlay");
   if (overlay) {
     overlay.style.display = "block";

@@ -147,34 +147,34 @@ def get_battery_info():
         if end_threshold and end_threshold < 100 and capacity >= (end_threshold - 3):
             is_conservation = True
 
-        # 3. Determine status_es and errors
+        # 3. Determine status_es and errors (clean status without redundant percentage)
         if is_charging:
-            status_es = f"Cargando ({capacity}%)"
+            status_es = "Cargando"
         elif is_full:
             if ac_online:
-                status_es = f"Carga Completa ({capacity}%)"
+                status_es = "Carga Completa"
             else:
-                status_es = f"Batería Completa ({capacity}%)"
+                status_es = "Batería Completa"
         elif is_conservation:
-            status_es = f"Cargador Conectado / Umbral Activo ({end_threshold}%)"
+            status_es = "Cargador Conectado / Umbral Activo"
         elif ac_online:
             # AC is plugged in, not charging yet, not full, not in conservation
             if up_status_lower == 'pending-charge' or ac_duration < 10.0:
                 # Negotiation / handshake grace period (first 10 seconds of plugging in)
-                status_es = f"Cargador Conectado (Iniciando carga... {capacity}%)"
+                status_es = "Cargador Conectado (Iniciando carga...)"
             elif capacity < 90 and (status_lower in ['not charging', 'discharging'] or up_status_lower in ['not-charging', 'discharging']):
                 # Sustained non-charging state after 10+ seconds
                 has_charge_error = True
                 error_msg = "CARGADOR CONECTADO PERO SIN CARGA (Posible fallo de puerto, cargador insuficiente o umbral BIOS)"
                 status_es = "Conectado / Batería No Carga"
             else:
-                status_es = f"Cargador Conectado ({capacity}%)"
+                status_es = "Cargador Conectado"
         else:
             # On battery power
             if status_lower in ['discharging', 'descargando'] or up_status_lower == 'discharging':
-                status_es = f"Descargando ({capacity}%)"
+                status_es = "Descargando"
             else:
-                status_es = f"Uso de Batería ({capacity}%)"
+                status_es = "Uso de Batería"
 
         # Energy / Charge readings (in uWh or uAh)
         energy_full_design = (

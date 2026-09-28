@@ -154,13 +154,13 @@ def get_ethernet_status():
                 is_lp, rtt = test_ethernet_loopback(dev)
                 if is_lp:
                     loopback_status = "verified"
-                    loopback_label = f"Loopback verificado (TX/RX OK - {rtt} ms)"
+                    loopback_label = f"Enlace activo ({rtt} ms)"
                 elif rtt == "no_echo":
                     loopback_status = "standard_link"
-                    loopback_label = "Enlace activo (Red / Switch)"
+                    loopback_label = "Enlace activo"
                 else:
                     loopback_status = "carrier_ok"
-                    loopback_label = "Enlace fisico activo (Carrier OK)"
+                    loopback_label = "Enlace activo"
             else:
                 if dev in _ETH_LOOPBACK_CACHE:
                     del _ETH_LOOPBACK_CACHE[dev]

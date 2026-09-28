@@ -147,16 +147,21 @@
             <div class="spec-value" id="bat-status-text">--</div>
           </div>
           <div id="charge-alert-banner"></div>
+          <div class="bat-metrics-grid">
             <div class="bat-metric-item">
               <span>Ciclos de carga:
                 <span class="info-tip-wrap">
                   <span class="info-tip-icon">i</span>
                   <span class="info-tip-box">
-                    <strong style="color: #f1f5f9; display: block; margin-bottom: 0.25rem;">Referencia de ciclos (Batería):</strong>
-                    • 0 a 300: Excelente<br>
+                    <strong style="color: #f1f5f9; display: block; margin-bottom: 0.25rem;">Ciclos de carga (Batería):</strong>
+                    <span style="display: block; color: #94a3b8; margin-bottom: 0.35rem; font-size: 0.72rem;">
+                      Un ciclo representa una descarga y recarga completa (100% acumulado). Mide el desgaste y envejecimiento real de las celdas químicas.
+                    </span>
+                    <strong style="color: #e2e8f0; display: block; margin-bottom: 0.2rem;">Estado según ciclos:</strong>
+                    • 0 a 300: Excelente (sin degradación apreciable)<br>
                     • 300 a 500: Normal / Buen estado<br>
-                    • 500 a 800: Desgaste moderado<br>
-                    • Más de 800: Desgaste alto
+                    • 500 a 800: Desgaste moderado (autonomía reducida)<br>
+                    • Más de 800: Desgaste alto (evaluar reemplazo)
                   </span>
                 </span>
               </span>
@@ -164,7 +169,7 @@
             </div>
             <div class="bat-metric-item"><span>Salud real:</span> <strong id="bat-health-val"
                 class="highlight-purple">--%</strong></div>
-            <div class="bat-metric-item"><span>Carga actual:</span> <strong id="bat-capacity">--%</strong></div>
+            <div class="bat-metric-item"><span>Batería actual:</span> <strong id="bat-capacity">--%</strong></div>
             <div class="bat-metric-item"><span>Capacidad de fábrica:</span> <span id="bat-design-wh">-- Wh</span></div>
             <div class="bat-metric-item"><span>Capacidad máxima:</span> <span id="bat-full-wh">-- Wh</span></div>
             <div class="bat-metric-item"><span>Voltaje actual:</span> <span id="bat-voltage">-- V</span></div>
@@ -187,7 +192,7 @@
       </div>
 
       <!-- FILA 2: ALMACENAMIENTO, PLACA Y CONECTIVIDAD (4 TARJETAS) -->
-      <div class="hardware-cards-layout" style="margin-top: 1.25rem;">
+      <div class="hardware-cards-layout hardware-storage-layout" style="margin-top: 1.25rem;">
 
         <!-- CARD 5: DISCO INTERNO SSD CON BOTÓN OPAL -->
         <div class="card">
@@ -387,10 +392,6 @@
             <div class="card-spec-item">
               <span class="spec-label">Enlace físico / Cable</span>
               <div class="spec-value spec-value-detail" id="eth-carrier-text">--</div>
-            </div>
-            <div class="card-spec-item">
-              <span class="spec-label">Diagnóstico Loopback (TX/RX)</span>
-              <div class="spec-value spec-value-detail" id="eth-loopback-text" style="color: var(--text-muted);">En espera de cable</div>
             </div>
           </div>
         </div>

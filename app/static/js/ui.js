@@ -128,8 +128,11 @@ function formatModelShortName(modelStr) {
 
   let s = modelStr.trim();
 
-  // 1. Clean common redundant brand prefixes
-  s = s.replace(/^(LENOVO|HP|Hewlett-Packard|Dell\s+Inc\.?|Dell|ASUSTeK\s+COMPUTER\s+INC\.?|ASUS|Acer|Apple\s+Inc\.?|Apple|Microsoft\s+Corporation|Micro-Star\s+International\s+Co\.,\s+Ltd\.?|MSI|SAMSUNG|Toshiba|Dynabook)\s*[:\-]?\s*/i, "");
+  // Strip anything in parentheses (e.g. part numbers / SKU codes like "(SBKPFV3)", hardware revs "(1.0)")
+  s = s.replace(/\s*\([^)]*\)/g, "").trim();
+
+  // 1. Clean common redundant brand prefixes (including repeated e.g. "HP HP ")
+  s = s.replace(/^(?:(LENOVO|HP|Hewlett-Packard|Dell\s+Inc\.?|Dell|ASUSTeK\s+COMPUTER\s+INC\.?|ASUS|Acer|Apple\s+Inc\.?|Apple|Microsoft\s+Corporation|Micro-Star\s+International\s+Co\.,\s+Ltd\.?|MSI|SAMSUNG|Toshiba|Dynabook)\s*[:\-]?\s*)+/i, "");
 
   // Strip machine type codes before model name (e.g. '21MLCTO1WW ThinkPad T14 Gen 6')
   s = s.replace(/^[0-9A-Z]{4,10}\s+(ThinkPad|ThinkBook|IdeaPad|Legion|Yoga|EliteBook|ProBook|Latitude|Precision|XPS|ZBook)/i, "$1");
@@ -216,11 +219,12 @@ function updateSystemTab(sys) {
   if (headerSerialEl) headerSerialEl.innerText = `S/N: ${serialStr}`;
   if (sysSerialEl) sysSerialEl.innerText = serialStr;
 
+  const cardModel = (sys.model || "").replace(/\b(HP|LENOVO|DELL|ASUS|ACER)\s+\1\b/gi, "$1").trim();
   const sysModelEl = document.getElementById("sys-model");
   const quickModelEl = document.getElementById("quick-model");
   const sysVendorEl = document.getElementById("sys-vendor");
-  if (sysModelEl) sysModelEl.innerText = sys.model || "Detectando modelo...";
-  if (quickModelEl) quickModelEl.innerText = formatModelShortName(sys.model);
+  if (sysModelEl) sysModelEl.innerText = cardModel || "Detectando modelo...";
+  if (quickModelEl) quickModelEl.innerText = formatModelShortName(cardModel);
   if (sysVendorEl) sysVendorEl.innerText = sys.vendor || "--";
 
   const sysCpuEl = document.getElementById("sys-cpu");
@@ -260,14 +264,16 @@ function updateBatteryTab(batteries) {
 
   const statusColor = bat.has_charge_error ? "#ef4444" : (bat.is_charging ? "#10b981" : (bat.is_full ? "#3b82f6" : (bat.is_conservation ? "#a855f7" : "")));
 
+  const cleanStatus = (bat.status_es || bat.status || "").replace(/\s*\(\d+%\)/g, "").trim();
+
   if (quickBat) quickBat.innerText = `${bat.capacity_percent}%`;
   if (quickCharge) {
-    quickCharge.innerText = bat.status_es || bat.status;
+    quickCharge.innerText = cleanStatus;
     quickCharge.style.color = statusColor || "";
   }
   if (batCap) batCap.innerText = `${bat.capacity_percent}%`;
   if (batStatus) {
-    batStatus.innerText = bat.status_es || bat.status;
+    batStatus.innerText = cleanStatus;
     batStatus.style.color = statusColor || "";
   }
 
@@ -328,6 +334,9 @@ function updateThermalTab(thermal) {
   }
 }
 
+let _lastInternalStorageJson = "";
+let _lastUsbStorageJson = "";
+
 // 4. UPDATE STORAGE (INTERNAL SSD/HDD & USB EXTERNAL DRIVES)
 function updateStorageTab(storage) {
   if (!storage) return;
@@ -346,123 +355,153 @@ function updateStorageTab(storage) {
   // 4a. Render Internal SSD / HDD
   const internalContainer = document.getElementById("storage-list");
   if (internalContainer) {
-    if (internalList.length > 0) {
-      internalContainer.innerHTML = internalList.map(s => {
-        const smartText = (s.smart_status || '').includes('100%') ? 'Salud 100% (Sin errores)' : (s.smart_status || 'Correcto');
-        const hasReadTests = Boolean(s.device_read_test && s.nvme_read_test);
-        const devReadPassed = s.device_read_test === 'PASSED';
-        const nvmeReadPassed = s.nvme_read_test === 'PASSED';
-        const isOpal = hasReadTests && (!devReadPassed || !nvmeReadPassed);
+    const currentInternalJson = JSON.stringify(internalList);
+    const isHoveringTip = Boolean(internalContainer.querySelector('.info-tip-wrap:hover'));
+    if (currentInternalJson !== _lastInternalStorageJson && !isHoveringTip) {
+      _lastInternalStorageJson = currentInternalJson;
+      if (internalList.length > 0) {
+        internalContainer.innerHTML = internalList.map(s => {
+          const smartText = (s.smart_status || '').includes('100%') ? 'Salud 100% (Sin errores)' : (s.smart_status || 'Correcto');
+          const hasReadTests = Boolean(s.device_read_test && s.nvme_read_test);
+          const devReadPassed = s.device_read_test === 'PASSED';
+          const nvmeReadPassed = s.nvme_read_test === 'PASSED';
+          const isOpal = hasReadTests && (!devReadPassed || !nvmeReadPassed);
 
-        let readSectionHtml = '';
-        if (s.device_read_test && s.nvme_read_test) {
-          readSectionHtml = `
-            <div class="card-spec-item">
-              <span class="spec-label">Pruebas de lectura</span>
-              <div class="spec-value spec-value-detail" style="font-family: var(--font-mono); font-size: 0.82rem; line-height: 1.45;">
-                Device Read: <span style="color: ${devReadPassed ? 'var(--success-green)' : '#f87171'}; font-weight: 700;">${s.device_read_test}</span><br>
-                NVMe Read: <span style="color: ${nvmeReadPassed ? 'var(--success-green)' : '#f87171'}; font-weight: 700;">${s.nvme_read_test}</span>
+          let readSectionHtml = '';
+          if (s.device_read_test && s.nvme_read_test) {
+            readSectionHtml = `
+              <div class="card-spec-item">
+                <span class="spec-label">Pruebas de lectura</span>
+                <div class="spec-value spec-value-detail" style="font-family: var(--font-mono); font-size: 0.82rem; line-height: 1.45;">
+                  Device Read: <span style="color: ${devReadPassed ? 'var(--success-green)' : '#f87171'}; font-weight: 700;">${s.device_read_test}</span><br>
+                  NVMe Read: <span style="color: ${nvmeReadPassed ? 'var(--success-green)' : '#f87171'}; font-weight: 700;">${s.nvme_read_test}</span>
+                </div>
               </div>
-            </div>
-          `;
-        }
+            `;
+          }
 
-        let opalAlertHtml = '';
-        if (isOpal) {
-          opalAlertHtml = `
-            <div class="card-spec-item" style="background: rgba(239, 68, 68, 0.08); border-left: 3px solid #ef4444; border-radius: 4px; padding: 0.45rem 0.6rem; margin-top: 0.35rem; display: flex; flex-direction: column; gap: 0.2rem;">
-              <div class="spec-value spec-value-detail" style="color: #f87171; font-weight: 700; font-size: 0.82rem;">
-                Posible bloqueo por cifrado TCG Opal
+          let opalAlertHtml = '';
+          if (isOpal) {
+            opalAlertHtml = `
+              <div class="card-spec-item" style="background: rgba(239, 68, 68, 0.08); border-left: 3px solid #ef4444; border-radius: 4px; padding: 0.45rem 0.6rem; margin-top: 0.35rem; display: flex; flex-direction: column; gap: 0.2rem;">
+                <div class="spec-value spec-value-detail" style="color: #f87171; font-weight: 700; font-size: 0.82rem;">
+                  Posible bloqueo por cifrado TCG Opal
+                </div>
               </div>
-            </div>
-          `;
-        }
+            `;
+          }
 
-        let enduranceHtml = '';
-        if (s.endurance && s.endurance.supported) {
-          enduranceHtml = `
-            <div class="card-spec-item">
-              <span class="spec-label">Vida útil y desgaste (Endurance)</span>
-              <div class="spec-value spec-value-detail" style="font-family: var(--font-mono); font-size: 0.82rem; line-height: 1.45;">
-                Total Escrito (TBW): <span style="font-weight: 600; color: var(--text-main);">${s.endurance.tbw_str}</span><br>
-                Ciclos P/E: <span style="font-weight: 600; color: var(--text-main);">${s.endurance.pe_cycles_str}</span>
-                <span class="info-tip-wrap">
-                  <span class="info-tip-icon">i</span>
-                  <span class="info-tip-box">
-                    <strong style="color: #f1f5f9; display: block; margin-bottom: 0.25rem;">Referencia de ciclos P/E (SSD):</strong>
-                    • 0 a 100: Excelente<br>
-                    • 100 a 300: Muy bueno<br>
-                    • 300 a 600: Uso moderado<br>
-                    • Más de 800: Desgaste alto
+          let enduranceHtml = '';
+          if (s.endurance && s.endurance.supported) {
+            enduranceHtml = `
+              <div class="card-spec-item">
+                <span class="spec-label">Vida útil y desgaste (Endurance)</span>
+                <div class="spec-value spec-value-detail" style="font-family: var(--font-mono); font-size: 0.82rem; line-height: 1.55;">
+                  Total Escrito (TBW): <span style="font-weight: 600; color: var(--text-main);">${s.endurance.tbw_str}</span>
+                  <span class="info-tip-wrap">
+                    <span class="info-tip-icon">i</span>
+                    <span class="info-tip-box">
+                      <strong style="color: #f1f5f9; display: block; margin-bottom: 0.25rem;">Total Escrito - TBW (SSD):</strong>
+                      <span style="display: block; color: #94a3b8; margin-bottom: 0.35rem; font-size: 0.72rem;">
+                        Terabytes Escritos (TBW): volumen total acumulado de datos grabados en las celdas flash desde su fabricación.
+                      </span>
+                      <strong style="color: #e2e8f0; display: block; margin-bottom: 0.2rem;">Límites típicos según tamaño:</strong>
+                      • 128 - 256 GB: 75 a 150 TBW<br>
+                      • 512 GB: 150 a 300 TBW<br>
+                      • 1 TB: 300 a 600 TBW<br>
+                      • 2 TB: 600 a 1200 TBW<br>
+                      <span style="display: block; color: #38bdf8; margin-top: 0.3rem; font-size: 0.69rem;">
+                        *Superar el límite del fabricante aumenta el riesgo de fallos o modo solo lectura.
+                      </span>
+                    </span>
+                  </span><br>
+                  Ciclos P/E: <span style="font-weight: 600; color: var(--text-main);">${s.endurance.pe_cycles_str}</span>
+                  <span class="info-tip-wrap">
+                    <span class="info-tip-icon">i</span>
+                    <span class="info-tip-box">
+                      <strong style="color: #f1f5f9; display: block; margin-bottom: 0.25rem;">Ciclos P/E (SSD):</strong>
+                      <span style="display: block; color: #94a3b8; margin-bottom: 0.35rem; font-size: 0.72rem;">
+                        Ciclos Programación/Borrado: promedio de veces que cada bloque de memoria física ha sido borrado y reescrito.
+                      </span>
+                      <strong style="color: #e2e8f0; display: block; margin-bottom: 0.2rem;">Referencia de desgaste:</strong>
+                      • 0 a 100: Excelente (prácticamente nuevo)<br>
+                      • 100 a 300: Muy bueno (vida útil óptima)<br>
+                      • 300 a 600: Uso moderado / normal<br>
+                      • Más de 800: Desgaste alto (memorias TLC/QLC toleran 600 - 1500 ciclos)
+                    </span>
                   </span>
-                </span>
+                </div>
+              </div>
+            `;
+          }
+
+          return `
+            <div class="card-spec-item">
+              <span class="spec-label">Disco interno (${s.type || 'SSD'})</span>
+              <div class="spec-value spec-value-accent" style="font-size: 0.95rem;">${s.model} (${s.size_gb} GB)</div>
+            </div>
+            <div class="card-spec-item">
+              <span class="spec-label">Dispositivo</span>
+              <div class="spec-value spec-value-detail"><code>${s.device}</code></div>
+            </div>
+            <div class="card-spec-item">
+              <span class="spec-label">Salud del disco (SMART)</span>
+              <div class="spec-value spec-value-detail" style="color: ${isOpal ? '#f59e0b' : 'var(--success-green)'}; font-weight: 700;">
+                ${isOpal ? 'SMART PASSED' : smartText}
               </div>
             </div>
+            ${enduranceHtml}
+            ${readSectionHtml}
+            ${opalAlertHtml}
           `;
-        }
-
-        return `
+        }).join("<hr class='divider' style='margin: 0.6rem 0;'>");
+        markCheckpassed("chk-ssd", "SSD");
+      } else {
+        internalContainer.innerHTML = `
           <div class="card-spec-item">
-            <span class="spec-label">Disco interno (${s.type || 'SSD'})</span>
-            <div class="spec-value spec-value-accent" style="font-size: 0.95rem;">${s.model} (${s.size_gb} GB)</div>
+            <span class="spec-label">Disco interno</span>
+            <div class="spec-value spec-value-detail" style="color: var(--text-muted);">Sin discos internos detectados</div>
           </div>
-          <div class="card-spec-item">
-            <span class="spec-label">Dispositivo</span>
-            <div class="spec-value spec-value-detail"><code>${s.device}</code></div>
-          </div>
-          <div class="card-spec-item">
-            <span class="spec-label">Salud del disco (SMART)</span>
-            <div class="spec-value spec-value-detail" style="color: ${isOpal ? '#f59e0b' : 'var(--success-green)'}; font-weight: 700;">
-              ${isOpal ? 'SMART PASSED' : smartText}
-            </div>
-          </div>
-          ${enduranceHtml}
-          ${readSectionHtml}
-          ${opalAlertHtml}
         `;
-      }).join("<hr class='divider' style='margin: 0.6rem 0;'>");
-      markCheckpassed("chk-ssd", "SSD");
-    } else {
-      internalContainer.innerHTML = `
-        <div class="card-spec-item">
-          <span class="spec-label">Disco interno</span>
-          <div class="spec-value spec-value-detail" style="color: var(--text-muted);">Sin discos internos detectados</div>
-        </div>
-      `;
+      }
     }
   }
 
   // 4b. Render USB External Storage
   const usbContainer = document.getElementById("usb-storage-list");
   if (usbContainer) {
-    if (usbList.length > 0) {
-      usbContainer.innerHTML = usbList.map(u => `
-        <div class="card-spec-item">
-          <span class="spec-label">Almacenamiento USB</span>
-          <div class="spec-value spec-value-accent" style="font-size: 0.95rem;">${u.model} (${u.size_gb} GB)</div>
-        </div>
-        <div class="card-spec-item">
-          <span class="spec-label">Dispositivo</span>
-          <div class="spec-value spec-value-detail"><code>${u.device}</code> (${u.type || 'USB Drive'})</div>
-        </div>
-        <div class="card-spec-item">
-          <span class="spec-label">Estado de conexión</span>
-          <div class="spec-value spec-value-detail" style="color: var(--success-green); font-weight: 700;">
-            ${u.smart_status || 'Conectado OK'}
+    const currentUsbJson = JSON.stringify(usbList);
+    if (currentUsbJson !== _lastUsbStorageJson) {
+      _lastUsbStorageJson = currentUsbJson;
+      if (usbList.length > 0) {
+        usbContainer.innerHTML = usbList.map(u => `
+          <div class="card-spec-item">
+            <span class="spec-label">Almacenamiento USB</span>
+            <div class="spec-value spec-value-accent" style="font-size: 0.95rem;">${u.model} (${u.size_gb} GB)</div>
           </div>
-        </div>
-      `).join("<hr class='divider' style='margin: 0.6rem 0;'>");
-    } else {
-      usbContainer.innerHTML = `
-        <div class="card-spec-item">
-          <span class="spec-label">Almacenamiento USB</span>
-          <div class="spec-value spec-value-detail" style="color: #cbd5e1;">Sin unidades USB conectadas</div>
-        </div>
-        <div class="card-spec-item">
-          <span class="spec-label">Puerto</span>
-          <div class="spec-value spec-value-detail" style="color: #94a3b8; font-size: 0.8rem;">Listo para pendrive / disco externo</div>
-        </div>
-      `;
+          <div class="card-spec-item">
+            <span class="spec-label">Dispositivo</span>
+            <div class="spec-value spec-value-detail"><code>${u.device}</code> (${u.type || 'USB Drive'})</div>
+          </div>
+          <div class="card-spec-item">
+            <span class="spec-label">Estado de conexión</span>
+            <div class="spec-value spec-value-detail" style="color: var(--success-green); font-weight: 700;">
+              ${u.smart_status || 'Conectado OK'}
+            </div>
+          </div>
+        `).join("<hr class='divider' style='margin: 0.6rem 0;'>");
+      } else {
+        usbContainer.innerHTML = `
+          <div class="card-spec-item">
+            <span class="spec-label">Almacenamiento USB</span>
+            <div class="spec-value spec-value-detail" style="color: #cbd5e1;">Sin unidades USB conectadas</div>
+          </div>
+          <div class="card-spec-item">
+            <span class="spec-label">Puerto</span>
+            <div class="spec-value spec-value-detail" style="color: #94a3b8; font-size: 0.8rem;">Listo para pendrive / disco externo</div>
+          </div>
+        `;
+      }
     }
   }
 }
@@ -579,7 +618,9 @@ function updateWifiTab(wifi) {
     const ethCarrier = document.getElementById("eth-carrier-text");
     const ethLoopback = document.getElementById("eth-loopback-text");
 
-    if (eth.present && eth.connected) {
+    const isConnected = eth.present && (eth.connected || eth.loopback_verified);
+
+    if (isConnected) {
       ethernetTestedPassed = true;
       markCheckpassed("chk-eth", "ETHERNET");
       if (ethStatus) {
@@ -594,15 +635,11 @@ function updateWifiTab(wifi) {
         ethCarrier.innerText = "Enlace activo";
         ethCarrier.style.color = "var(--success-green)";
       }
-      if (ethLoopback && eth.primary) {
-        ethLoopback.innerText = eth.primary.loopback_label || "Enlace activo";
-        if (eth.primary.loopback_status === "verified") {
-          ethLoopback.style.color = "var(--success-green)";
-        } else {
-          ethLoopback.style.color = "var(--text-main)";
-        }
+      if (ethLoopback) {
+        ethLoopback.innerText = "Enlace activo";
+        ethLoopback.style.color = "var(--success-green)";
       }
-    } else if (eth.present && !eth.connected) {
+    } else if (eth.present && !eth.connected && !eth.loopback_verified) {
       if (ethernetTestedPassed) {
         markCheckpassed("chk-eth", "ETHERNET");
         if (ethStatus) {

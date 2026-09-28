@@ -124,14 +124,26 @@ def get_ram_info():
     return {'total_gb': 0, 'used_gb': 0, 'avail_gb': 0, 'percent_used': 0}
 
 def get_system_summary():
-    vendor = read_dmi_field('sys_vendor') or read_dmi_field('board_vendor') or 'Generico'
-    model = read_dmi_field('product_name') or read_dmi_field('board_name') or 'Laptop / PC'
-    version = read_dmi_field('product_version') or ''
+    import re
+    vendor = (read_dmi_field('sys_vendor') or read_dmi_field('board_vendor') or 'Generico').strip()
+    model = (read_dmi_field('product_name') or read_dmi_field('product_family') or read_dmi_field('board_name') or 'Laptop / PC').strip()
+    version = (read_dmi_field('product_version') or '').strip()
     serial = read_dmi_field('product_serial') or 'N/A'
     
-    full_model_str = f"{vendor} {model}".strip()
-    if version and version not in model:
-        full_model_str += f" ({version})"
+    # Prevent duplicating vendor if model already starts with vendor name (e.g. "HP" and "HP EliteBook...")
+    v_first = vendor.split()[0] if vendor else ""
+    if v_first and model.lower().startswith(v_first.lower()):
+        full_model_str = model
+    else:
+        full_model_str = f"{vendor} {model}".strip()
+
+    # Deduplicate repeated brand names if any (e.g. "HP HP ...")
+    full_model_str = re.sub(r'\b(HP|LENOVO|DELL|ASUS|ACER)\s+\1\b', r'\1', full_model_str, flags=re.IGNORECASE)
+
+    # Keep part number / SKU version in parentheses for technical card reference (e.g. "(SBKPFV3)")
+    if version and version.lower() not in full_model_str.lower():
+        if not re.match(r'^(None|Default string|To be filled by O\.E\.M\.|System Version)$', version, re.IGNORECASE):
+            full_model_str = f"{full_model_str} ({version})"
 
     cpu_model, cpu_arch = get_cpu_and_arch()
 

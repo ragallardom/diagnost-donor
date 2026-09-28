@@ -53,6 +53,10 @@ async function startCamera() {
     const setCamPassed = () => {
       if (video.videoWidth && video.videoHeight) {
         resInfo.innerText = `Res: ${video.videoWidth}x${video.videoHeight}`;
+        const container = video.closest(".camera-preview-container");
+        if (container) {
+          container.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
+        }
       }
       markCheckpassed("chk-camera", "CÁMARA");
     };
@@ -86,7 +90,11 @@ function stopCamera() {
     cameraStream = null;
   }
   const video = document.getElementById("camera-video");
-  if (video) video.srcObject = null;
+  if (video) {
+    video.srcObject = null;
+    const container = video.closest(".camera-preview-container");
+    if (container) container.style.aspectRatio = "16 / 9";
+  }
   const overlay = document.getElementById("cam-overlay");
   if (overlay) {
     overlay.style.display = "block";

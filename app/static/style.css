@@ -228,14 +228,21 @@ body.stealth-purple-theme {
   align-items: stretch;
 }
 
+/* FILA 2: DISCO INTERNO SSD Y ALMACENAMIENTO USB MÁS ANCHOS QUE PLACA BASE Y BLUETOOTH */
+.hardware-storage-layout {
+  grid-template-columns: 1.35fr 1fr 1fr 1.35fr;
+}
+
 @media (max-width: 1200px) {
-  .hardware-cards-layout {
+  .hardware-cards-layout,
+  .hardware-storage-layout {
     grid-template-columns: 1fr 1fr;
   }
 }
 
 @media (max-width: 768px) {
-  .hardware-cards-layout {
+  .hardware-cards-layout,
+  .hardware-storage-layout {
     grid-template-columns: 1fr;
   }
 }
@@ -412,11 +419,11 @@ body.stealth-purple-theme {
   left: 50%;
   transform: translateX(-30%);
   width: max-content;
-  max-width: 260px;
+  max-width: 300px;
   background: #0f172a;
   border: 1px solid #334155;
   border-radius: 6px;
-  padding: 0.5rem 0.7rem;
+  padding: 0.55rem 0.75rem;
   font-size: 0.73rem;
   color: #cbd5e1;
   font-family: var(--font-sans);
@@ -794,19 +801,21 @@ body.stealth-purple-theme {
 .camera-preview-container {
   position: relative;
   width: 100%;
-  height: 220px;
+  aspect-ratio: 16 / 9;
+  max-height: 360px;
   background-color: #000;
   border-radius: 8px;
   overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
+  border: 1px solid var(--border-color);
 }
 
 #camera-video {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .camera-overlay {
@@ -849,8 +858,14 @@ body.stealth-purple-theme {
   border-radius: 6px;
   display: flex;
   justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
   font-size: 0.8rem;
   border: 1px solid var(--border-color);
+}
+
+.sensor-item strong {
+  text-align: right;
 }
 
 /* Data Table */
