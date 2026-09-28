@@ -16,19 +16,29 @@ async function refreshAllData() {
     if (typeof resetHdmiTest === "function") resetHdmiTest();
     if (typeof resetEthernetTest === "function") resetEthernetTest();
 
-    // 2. Fetch fresh hardware data
-    const res = await fetch("/api/all");
-    if (!res.ok) throw new Error("HTTP error " + res.status);
-    const data = await res.json();
+    // 2. Fetch each section in parallel and render it as soon as it arrives, so
+    //    fast sections (system, battery, sensors) don't wait for the slow disk probes.
+    const load = (url, render) => fetch(url)
+      .then(res => { if (!res.ok) throw new Error(`HTTP ${res.status} en ${url}`); return res.json(); })
+      .then(render)
+      .catch(err => console.error("Error cargando", url, err));
 
-    updateSystemTab(data.system);
-    updateBatteryTab(data.battery || data.batteries);
-    updateThermalTab(data.thermal);
-    updateStorageTab(data.storage);
-    updateBluetoothTab(data.bluetooth);
-    updateDisplayTab(data.display);
-    updateWifiTab(data.wifi);
-    updateDriveSelector(data.storage || data.drives);
+    const fastSections = Promise.all([
+      load("/api/system", updateSystemTab),
+      load("/api/battery", data => updateBatteryTab(data)),
+      load("/api/thermal", updateThermalTab),
+      load("/api/wifi", updateWifiTab),
+      load("/api/bluetooth", updateBluetoothTab),
+      load("/api/display", updateDisplayTab),
+    ]);
+    // Disk probes (read tests, SMART, Opal) are the slowest part; the Opal drive
+    // list itself is fetched only when its modal opens.
+    load("/api/storage", storage => {
+      updateStorageTab(storage);
+      updateDriveSelector(storage);
+    });
+
+    await fastSections;
 
     // 3. Re-run all automatic tests
     setTimeout(runCpuQuickTest, 300);

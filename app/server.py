@@ -38,7 +38,7 @@ from battery import get_battery_info
 from thermal import get_thermal_and_fans
 from system_info import get_system_summary
 from wifi_diag import get_wifi_status
-from storage_diag import get_storage_info, exclusive_disk_access
+from storage_diag import get_storage_info, get_storage_snapshot, exclusive_disk_access
 from bluetooth_diag import (
     get_bluetooth_info,
     start_bluetooth_receiver,
@@ -278,7 +278,7 @@ class DiagnosticHandler(http.server.SimpleHTTPRequestHandler):
                 'battery':   get_battery_info(),
                 'thermal':   get_thermal_and_fans(),
                 'wifi':      get_wifi_status(),
-                'storage':   get_storage_info(),
+                'storage':   get_storage_snapshot(),
                 'display':   get_display_and_mobo(),
             },
             '/api/all': lambda: {
