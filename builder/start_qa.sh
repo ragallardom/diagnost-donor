@@ -74,13 +74,22 @@ if [ "$IS_LIVE" -eq 1 ] && { [ "$SB_OK" -eq 0 ] || [ "$TPM_OK" -eq 0 ]; }; then
 
     printf "$SHOW_ERR\n"
 
-    # Sin terminal visible en el kiosk: mostrar el aviso como diálogo gráfico.
+    # Sin terminal visible en el kiosk: mostrar el aviso como diálogo gráfico
+    # (zenity; xmessage como respaldo). El reinicio no depende del diálogo:
+    # ocurre a los 10 segundos aunque el técnico lo cierre.
+    ALERT_SHOWN=0
     if command -v zenity >/dev/null 2>&1; then
         zenity --error --no-wrap --timeout=10 --title="DIAGNOSTDONOR - Seguridad en BIOS" \
             --text="<tt>$(printf "$SHOW_ERR" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')</tt>" 2>/dev/null &
+        ALERT_PID=$!
+        sleep 0.5
+        kill -0 "$ALERT_PID" 2>/dev/null && ALERT_SHOWN=1
+    fi
+    if [ "$ALERT_SHOWN" -eq 0 ] && command -v xmessage >/dev/null 2>&1; then
+        printf "$SHOW_ERR\n" | xmessage -center -timeout 10 -file - 2>/dev/null &
     fi
 
-    sleep 10
+    sleep 9.5
     reboot -f 2>/dev/null || { echo 1 > /proc/sys/kernel/sysrq && echo b > /proc/sysrq-trigger; }
     exit 1
 fi
