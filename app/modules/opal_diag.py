@@ -15,9 +15,52 @@ import re
 import json
 import time
 
+# Whole-disk device nodes that destructive operations may target.
+TARGET_DEVICE_RE = re.compile(r"^/dev/(nvme\d+(n\d+)?|sd[a-z]+|mmcblk\d+)$")
+
+# Mount points used by live-boot for the boot medium (the USB stick).
+LIVE_MEDIUM_MOUNTS = ('/run/live/medium', '/lib/live/mount/medium', '/cdrom')
+
+
+def _parent_disk(dev_name):
+    """Return the whole-disk name for a block device or partition (sdb1 -> sdb)."""
+    sys_path = f'/sys/class/block/{dev_name}'
+    if not os.path.exists(sys_path):
+        return dev_name
+    if os.path.exists(os.path.join(sys_path, 'partition')):
+        return os.path.basename(os.path.dirname(os.path.realpath(sys_path)))
+    return dev_name
+
+
+def get_boot_medium_disks():
+    """Whole-disk names (e.g. {'sdb'}) backing the live boot medium."""
+    disks = set()
+    try:
+        with open('/proc/mounts', 'r') as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 2 and parts[1] in LIVE_MEDIUM_MOUNTS and parts[0].startswith('/dev/'):
+                    disks.add(_parent_disk(os.path.basename(os.path.realpath(parts[0]))))
+    except Exception:
+        pass
+    return disks
+
+
+def validate_target_device(device):
+    """Check a device path is a whole disk that may be wiped. Returns (ok, reason)."""
+    if not isinstance(device, str) or not TARGET_DEVICE_RE.fullmatch(device):
+        return False, f'Error: Dispositivo objetivo no válido: {device!r}.'
+    if not os.path.exists(device):
+        return False, f'Error: El dispositivo objetivo {device} no existe en el sistema o fue desconectado.'
+    if os.path.basename(device) in get_boot_medium_disks():
+        return False, f'Error: {device} es el pendrive de arranque de DIAGNOST-DONOR y no puede borrarse.'
+    return True, ''
+
+
 def list_target_drives():
     drives = []
-    seen_devices = set()
+    # Never offer the live boot medium as a wipe target.
+    seen_devices = {f'/dev/{d}' for d in get_boot_medium_disks()}
 
     # 1. Primary Strategy: Scan via sedutil-cli
     try:

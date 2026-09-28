@@ -3,11 +3,43 @@
 Internal SSD & Storage Diagnostic Module
 Scans NVMe & SATA SSDs/HDDs, extracts drive model, capacity, SMART health,
 and executes low-level Device Read Test & NVMe Read Test to detect TCG Opal locking.
+
+The expensive per-drive probes (dd/nvme reads, sedutil, SMART) are cached per
+device and only re-run when a drive appears/changes, when the cache expires, or
+after a destructive disk operation invalidates it. This keeps the 1 s telemetry
+poll cheap.
 """
 
 import os
 import glob
+import json
+import re
 import subprocess
+import threading
+import time
+from contextlib import contextmanager
+
+# Serializes destructive disk operations (PSID revert, crypto erase) among themselves.
+DISK_LOCK = threading.Lock()
+# Serializes drive scans; also guards _disk_op_active.
+_SCAN_LOCK = threading.Lock()
+_disk_op_active = False
+
+# Seconds a drive's probe results stay valid before being refreshed.
+PROBE_TTL_SEC = 60
+
+_probe_cache = {}      # dev_name -> {'key': (...), 'time': float, 'data': dict}
+_probe_cache_lock = threading.Lock()
+_last_snapshot = {'internal': [], 'usb': [], 'all': []}
+
+
+def invalidate_storage_cache(dev_name=None):
+    """Drop cached probe results for one device (e.g. 'nvme0n1') or for all."""
+    with _probe_cache_lock:
+        if dev_name is None:
+            _probe_cache.clear()
+        else:
+            _probe_cache.pop(os.path.basename(dev_name), None)
 
 
 def check_drive_read_and_opal(dev_path, is_usb=False):
@@ -85,10 +117,6 @@ def check_drive_read_and_opal(dev_path, is_usb=False):
         'is_opal_locked': is_opal,
         'read_diagnostic': 'Posible bloqueo por cifrado TCG Opal' if is_opal else ('PASSED' if (device_read == 'PASSED' and nvme_read == 'PASSED') else 'FAILED')
     }
-
-
-import json
-import re
 
 
 def get_drive_endurance(dev_path, size_gb):
@@ -264,9 +292,80 @@ def get_drive_endurance(dev_path, size_gb):
     return endurance
 
 
+def _probe_drive(dev_name, dev_file_path, is_usb, size_gb):
+    """Run the expensive per-drive probes (read tests, SMART, crypto caps)."""
+    diag = check_drive_read_and_opal(dev_file_path, is_usb=is_usb)
+    endurance = get_drive_endurance(dev_file_path, size_gb)
+
+    # Check NVMe Sanitize / Crypto Erase capability
+    crypto_supported = False
+    crypto_label = "Solo Formato Estandar"
+    if 'nvme' in dev_name:
+        try:
+            from opal_diag import get_nvme_crypto_capabilities
+            caps = get_nvme_crypto_capabilities(dev_file_path)
+            crypto_supported = caps.get('crypto_supported', False)
+            crypto_label = caps.get('status_label', 'Compatible con Borrado Criptografico (NVMe Sanitize / SES-2)')
+        except Exception:
+            crypto_supported = True
+            crypto_label = "Compatible con Borrado Criptografico (NVMe Sanitize / SES-2)"
+
+    return {
+        'diag': diag,
+        'endurance': endurance,
+        'crypto_supported': crypto_supported,
+        'crypto_label': crypto_label,
+    }
+
+
+def _get_cached_probe(dev_name, dev_file_path, is_usb, size_gb, model):
+    key = (model, size_gb, is_usb)
+    now = time.monotonic()
+    with _probe_cache_lock:
+        entry = _probe_cache.get(dev_name)
+        if entry and entry['key'] == key and (now - entry['time']) < PROBE_TTL_SEC:
+            return entry['data']
+
+    data = _probe_drive(dev_name, dev_file_path, is_usb, size_gb)
+    with _probe_cache_lock:
+        _probe_cache[dev_name] = {'key': key, 'time': time.monotonic(), 'data': data}
+    return data
+
+
+@contextmanager
+def exclusive_disk_access():
+    """Run a destructive disk operation with no drive scan touching the disks.
+
+    Waits for any in-flight scan to finish; while the operation runs, scans
+    return the last snapshot instead of probing. Invalidates the probe cache
+    afterwards so the next scan reflects the new drive state.
+    """
+    global _disk_op_active
+    with DISK_LOCK:
+        with _SCAN_LOCK:
+            _disk_op_active = True
+        try:
+            yield
+        finally:
+            with _SCAN_LOCK:
+                _disk_op_active = False
+            invalidate_storage_cache()
+
+
 def get_storage_info():
+    global _last_snapshot
+    with _SCAN_LOCK:
+        # A destructive disk operation is in progress: don't probe the drives.
+        if _disk_op_active:
+            return _last_snapshot
+        _last_snapshot = _scan_storage()
+        return _last_snapshot
+
+
+def _scan_storage():
     internal_drives = []
     usb_drives = []
+    present = set()
 
     # 1. Search block devices in /sys/block/
     block_devices = sorted(glob.glob('/sys/block/sd*') + glob.glob('/sys/block/nvme*') + glob.glob('/sys/block/mmcblk*'))
@@ -312,21 +411,9 @@ def get_storage_info():
                 pass
 
         if size_gb > 0:
-            diag = check_drive_read_and_opal(dev_file_path, is_usb=is_usb)
-            endurance = get_drive_endurance(dev_file_path, size_gb)
-
-            # Check NVMe Sanitize / Crypto Erase capability
-            crypto_supported = False
-            crypto_label = "Solo Formato Estandar"
-            if 'nvme' in dev_name:
-                try:
-                    from opal_diag import get_nvme_crypto_capabilities
-                    caps = get_nvme_crypto_capabilities(dev_file_path)
-                    crypto_supported = caps.get('crypto_supported', False)
-                    crypto_label = caps.get('status_label', 'Compatible con Borrado Criptografico (NVMe Sanitize / SES-2)')
-                except Exception:
-                    crypto_supported = True
-                    crypto_label = "Compatible con Borrado Criptografico (NVMe Sanitize / SES-2)"
+            present.add(dev_name)
+            probe = _get_cached_probe(dev_name, dev_file_path, is_usb, size_gb, model)
+            diag = probe['diag']
 
             smart_status = 'Salud 100% (Sin errores)' if not is_usb else 'Conectado OK'
             if diag['is_opal_locked']:
@@ -343,14 +430,19 @@ def get_storage_info():
                 'nvme_read_test': diag['nvme_read_test'],
                 'is_opal_locked': diag['is_opal_locked'],
                 'read_diagnostic': diag['read_diagnostic'],
-                'crypto_supported': crypto_supported,
-                'crypto_status_label': crypto_label,
-                'endurance': endurance
+                'crypto_supported': probe['crypto_supported'],
+                'crypto_status_label': probe['crypto_label'],
+                'endurance': probe['endurance']
             }
             if is_usb:
                 usb_drives.append(drive_data)
             else:
                 internal_drives.append(drive_data)
+
+    # Forget drives that were unplugged so a re-plug is probed again.
+    with _probe_cache_lock:
+        for gone in set(_probe_cache) - present:
+            del _probe_cache[gone]
 
     return {
         'internal': internal_drives,
@@ -360,6 +452,5 @@ def get_storage_info():
 
 
 if __name__ == '__main__':
-    import json
     print(json.dumps(get_storage_info(), indent=2))
 

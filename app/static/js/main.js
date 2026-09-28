@@ -14,15 +14,11 @@ document.addEventListener("DOMContentLoaded", () => {
   requestKeyboardLock();
 
   // 3. Hardware Data Initial Load & Smart Polling (Fast 1s interval for instant HDMI/Sensor response)
+  //    refreshAllData() also auto-launches the baseline CPU, RAM, camera and mic tests.
   refreshAllData(); // Full load once
-  setInterval(refreshTelemetry, 1000); // Polling dynamic sensors & external displays
+  startTelemetryLoop(); // Polling dynamic sensors & external displays
 
-  // 4. Auto-launch background baseline diagnostics
-  setTimeout(runRamTest, 1000);
-  setTimeout(startCamera, 800);
-  setTimeout(startMicTest, 1000);
-
-  // 5. Unlock AudioContext & enforce Keyboard Lock on first user interaction
+  // 4. Unlock AudioContext & enforce Keyboard Lock on first user interaction
   const unlockAudioAndLock = () => {
     requestKeyboardLock();
     if (audioContext && audioContext.state === 'suspended') {

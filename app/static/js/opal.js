@@ -678,11 +678,7 @@ async function startBluetoothReceiver() {
   if (statusText) statusText.innerText = 'Iniciando receptor Bluetooth ("DIAGNOST-DONOR")...';
 
   try {
-    const res = await fetch("/api/bluetooth-receiver/start", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "DIAGNOST-DONOR" })
-    });
+    const res = await apiPost("/api/bluetooth-receiver/start", { name: "DIAGNOST-DONOR" });
     const data = await res.json();
 
     if (statusText) {

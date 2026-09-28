@@ -129,7 +129,7 @@ apt-get update -q
 apt-get install -y --no-install-recommends \
   live-build debootstrap xorriso squashfs-tools binutils dpkg-dev \
   mtools syslinux-utils isolinux syslinux-common \
-  syslinux shim-signed grub-efi-amd64-signed dosfstools ca-certificates zstd pigz xz-utils
+  syslinux shim-signed grub-efi-amd64-signed grub-common dosfstools ca-certificates zstd pigz xz-utils
 
 # isohybrid fix: asegurarse que isohybrid este disponible en todos los PATHs del sistema y chroot
 if [ -f /usr/bin/isohybrid ]; then
@@ -192,12 +192,11 @@ live-config-systemd
 xorg
 openbox
 dbus-x11
-xterm
 x11-xserver-utils
-wget
-curl
 gnupg
 ca-certificates
+# Firewall: bloquea todo el tráfico IP salvo loopback (kiosk sin red)
+nftables
 # Dependencias completas para Google Chrome (Ubuntu 24.04 noble)
 fonts-liberation
 fonts-dejavu-core
@@ -458,23 +457,39 @@ KEYMAP=n
 COMPRESS=gzip
 INITEof
 
-# ── 6. Firefox: permisos automáticos de cámara y micrófono ───────────
-mkdir -p config/includes.chroot/etc/firefox/policies
-cat > config/includes.chroot/etc/firefox/policies/policies.json << 'FFEOF'
-{
-  "policies": {
-    "Permissions": {
-      "Camera":     { "Allow": ["http://localhost:8080", "http://127.0.0.1:8080"] },
-      "Microphone": { "Allow": ["http://localhost:8080", "http://127.0.0.1:8080"] }
-    }
-  }
-}
-FFEOF
-
-# ── 6b. Chromium / Chrome: políticas para auto-otorgar cámara, micrófono y audio ──
+# ── 6. Chromium / Chrome: políticas de kiosk ──────────────────────────
+# - Auto-otorgar cámara, micrófono y audio solo a la app local.
+# - Lista blanca de URL: solo se puede cargar http://127.0.0.1:8080 (ni webs,
+#   ni file://, ni chrome://), sin diálogos de archivo, descargas, impresión,
+#   DevTools, extensiones, perfiles ni modo incógnito.
 # Chromium-browser usa /etc/chromium-browser/policies/managed/
 # Google Chrome usa /etc/opt/chrome/policies/managed/
 POLICY_JSON='{
+  "URLBlocklist": ["*", "chrome://*", "chrome-untrusted://*", "chrome-extension://*", "devtools://*", "file://*", "view-source:*"],
+  "URLAllowlist": ["http://127.0.0.1:8080", "http://localhost:8080"],
+  "AllowFileSelectionDialogs": false,
+  "DownloadRestrictions": 3,
+  "PrintingEnabled": false,
+  "IncognitoModeAvailability": 1,
+  "BrowserGuestModeEnabled": false,
+  "BrowserAddPersonEnabled": false,
+  "BookmarkBarEnabled": false,
+  "EditBookmarksEnabled": false,
+  "ExtensionInstallBlocklist": ["*"],
+  "TaskManagerEndProcessEnabled": false,
+  "DefaultPopupsSetting": 2,
+  "DefaultWebBluetoothGuardSetting": 2,
+  "DefaultWebUsbGuardSetting": 2,
+  "DefaultSerialGuardSetting": 2,
+  "DefaultWebHidGuardSetting": 2,
+  "AutofillAddressEnabled": false,
+  "AutofillCreditCardEnabled": false,
+  "SpellcheckEnabled": false,
+  "SearchSuggestEnabled": false,
+  "BrowserNetworkTimeQueriesEnabled": false,
+  "PromotionalTabsEnabled": false,
+  "BackgroundModeEnabled": false,
+  "CommandLineFlagSecurityWarningsEnabled": false,
   "VideoCaptureAllowedUrls": ["http://localhost:8080", "http://127.0.0.1:8080"],
   "AudioCaptureAllowedUrls":  ["http://localhost:8080", "http://127.0.0.1:8080"],
   "DefaultGeolocationSetting": 2,
@@ -516,17 +531,26 @@ GEOF
 mkdir -p config/includes.chroot/root config/includes.chroot/etc/skel
 cat > config/includes.chroot/root/.bash_profile << 'BPEOF'
 #!/bin/bash
-# Auto-iniciar X en tty1 si no hay sesión gráfica activa
+# Kiosk: esta sesión nunca debe quedar en una shell interactiva.
+# Ignorar Ctrl+C / Ctrl+Z / Ctrl+\ para que no se pueda interrumpir el perfil.
+trap '' INT QUIT TSTP
 if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
-  exec startx /root/.xinitrc > /tmp/startx.log 2>&1
+  # Si X termina o falla, volver a iniciarlo en lugar de caer a la shell.
+  # (Las señales se restauran para la sesión gráfica: el bloqueo solo aplica al perfil.)
+  while true; do
+    ( trap - INT QUIT TSTP; exec startx /root/.xinitrc > /tmp/startx.log 2>&1 )
+    sleep 1
+  done
 fi
+# Cualquier otro login (no debería existir): cerrar sin shell.
+exit 0
 BPEOF
 cp config/includes.chroot/root/.bash_profile config/includes.chroot/etc/skel/.bash_profile
 
 # 7c. .xinitrc: configura openbox como WM y lanza la app QA
 cat > config/includes.chroot/root/.xinitrc << 'XIEOF'
 #!/bin/bash
-# Iniciar dbus session bus (necesario para Firefox, Chrome, Epiphany)
+# Iniciar dbus session bus (necesario para Chrome)
 if command -v dbus-launch >/dev/null 2>&1; then
   eval $(dbus-launch --sh-syntax)
 fi
@@ -565,7 +589,7 @@ Section "ServerFlags"
 EndSection
 XORGEOF
 
-# 7d. Openbox autostart: desmutear audio, iniciar red y lanzar terminal visible xterm con start_qa.sh
+# 7d. Openbox autostart: desmutear audio, preparar radios y lanzar start_qa.sh (sin terminal visible)
 mkdir -p config/includes.chroot/etc/xdg/openbox
 cat > config/includes.chroot/etc/xdg/openbox/autostart << 'OBEOF'
 #!/bin/bash
@@ -601,8 +625,8 @@ wireplumber >/tmp/wireplumber.log 2>&1 &
 # Esperar a que los servicios estén listos
 sleep 0.4
 
-# Lanzar el iniciador de diagnóstico con start_qa.sh
-xterm -geometry 110x30+40+40 -title "DIAGNOSTDONOR QA SUITE" -e "/opt/qa_suite/start_qa.sh" &
+# Lanzar el iniciador de diagnóstico en segundo plano (sin terminal: el kiosk no expone shell)
+/opt/qa_suite/start_qa.sh > /tmp/qa_launcher.log 2>&1 &
 OBEOF
 chmod +x config/includes.chroot/etc/xdg/openbox/autostart
 
@@ -617,21 +641,112 @@ cat > config/includes.chroot/etc/xdg/openbox/rc.xml << 'RCEOF'
     <keepBorder>no</keepBorder>
   </theme>
   <desktops><number>1</number></desktops>
+  <!-- Kiosk: sin atajos de teclado (Alt+F4, Alt+Tab, etc. deshabilitados) -->
   <keyboard>
-    <!-- Alt+F4 deshabilitado para evitar cerrar el navegador en modo Kiosk -->
   </keyboard>
+  <!-- Kiosk: solo enfocar/levantar ventanas con clic. Sin menú de escritorio
+       (el menú por defecto de openbox permite abrir una terminal), sin
+       mover/redimensionar/cerrar ventanas con el mouse. -->
+  <mouse>
+    <context name="Client">
+      <mousebind button="Left" action="Press"><action name="Focus"/><action name="Raise"/></mousebind>
+      <mousebind button="Middle" action="Press"><action name="Focus"/><action name="Raise"/></mousebind>
+      <mousebind button="Right" action="Press"><action name="Focus"/><action name="Raise"/></mousebind>
+    </context>
+  </mouse>
+  <menu>
+    <file>/etc/xdg/openbox/menu.xml</file>
+  </menu>
 </openbox_config>
 RCEOF
 
-# 7f. Configuración de NetworkManager para gestionar todos los adaptadores Wi-Fi y permitir escaneo
+# Menú de openbox vacío (reemplaza el que trae "Terminal emulator")
+cat > config/includes.chroot/etc/xdg/openbox/menu.xml << 'MENUEOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<openbox_menu xmlns="http://openbox.org/3.4/menu">
+  <menu id="root-menu" label="DIAGNOSTDONOR">
+  </menu>
+</openbox_menu>
+MENUEOF
+
+# 7f. Configuración de NetworkManager: gestionar adaptadores Wi-Fi para permitir
+#     el escaneo, pero sin crear conexiones automáticas (el kiosk no se conecta a
+#     ninguna red; no se generan perfiles DHCP para Ethernet ni chequeos de conectividad).
 mkdir -p config/includes.chroot/etc/NetworkManager/conf.d
 cat > config/includes.chroot/etc/NetworkManager/conf.d/10-qa-wifi.conf << 'NMEOF'
+[main]
+no-auto-default=*
+
+[connectivity]
+enabled=false
+
 [device]
 wifi.scan-rand-mac-address=no
 
 [keyfile]
 unmanaged-devices=none
 NMEOF
+
+# 7g. Firewall nftables: descartar todo el tráfico IP que no sea loopback.
+#     La UI (127.0.0.1:8080) sigue funcionando; el escaneo Wi-Fi, la detección de
+#     enlace Ethernet y el test de loopback RJ-45 (tramas capa 2) no usan IP.
+cat > config/includes.chroot/etc/nftables.conf << 'NFTEOF'
+#!/usr/sbin/nft -f
+flush ruleset
+
+table inet diagnost_kiosk {
+  chain input {
+    type filter hook input priority filter; policy drop;
+    iif "lo" accept
+  }
+  chain forward {
+    type filter hook forward priority filter; policy drop;
+  }
+  chain output {
+    type filter hook output priority filter; policy drop;
+    oif "lo" accept
+  }
+}
+NFTEOF
+mkdir -p config/includes.chroot/etc/systemd/system/sysinit.target.wants
+ln -sf /lib/systemd/system/nftables.service config/includes.chroot/etc/systemd/system/sysinit.target.wants/nftables.service
+
+# 7h. Endurecimiento del sistema: sin IPv6, sin SysRq, sin forwarding
+mkdir -p config/includes.chroot/etc/sysctl.d
+cat > config/includes.chroot/etc/sysctl.d/99-diagnost-kiosk.conf << 'SYSCTLEOF'
+kernel.sysrq = 0
+net.ipv4.ip_forward = 0
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+SYSCTLEOF
+
+# 7i. Sin consolas de texto adicionales: no se crean gettys en tty2..tty6,
+#     Ctrl+Alt+Supr no reinicia y la shell de depuración queda deshabilitada.
+mkdir -p config/includes.chroot/etc/systemd/logind.conf.d
+cat > config/includes.chroot/etc/systemd/logind.conf.d/10-diagnost-kiosk.conf << 'LOGINDEOF'
+[Login]
+NAutoVTs=0
+ReserveVT=0
+LOGINDEOF
+for unit in ctrl-alt-del.target debug-shell.service autovt@.service serial-getty@.service; do
+  ln -sf /dev/null "config/includes.chroot/etc/systemd/system/$unit"
+done
+
+# 7j. Hook: eliminar emuladores de terminal que arrastran las dependencias de Xorg
+#     (el metapaquete xorg depende de xterm) y asegurar el firewall activo.
+cat > config/hooks/chroot/0060-kiosk-lockdown.hook.chroot << 'LOCKEOF'
+#!/bin/sh
+set -e
+for term in xterm uxterm lxterm koi8rxterm x-terminal-emulator; do
+  rm -f "/usr/bin/$term" "/etc/alternatives/$term"
+done
+rm -f /usr/share/applications/debian-xterm.desktop /usr/share/applications/debian-uxterm.desktop
+systemctl enable nftables.service 2>/dev/null || true
+LOCKEOF
+chmod +x config/hooks/chroot/0060-kiosk-lockdown.hook.chroot
+mkdir -p config/hooks/normal
+cp config/hooks/chroot/0060-kiosk-lockdown.hook.chroot config/hooks/chroot/0060-kiosk-lockdown.chroot 2>/dev/null || true
+cp config/hooks/chroot/0060-kiosk-lockdown.hook.chroot config/hooks/normal/0060-kiosk-lockdown.hook.chroot 2>/dev/null || true
 
 # ── 8. Copiar código de la app ────────────────────────────────────────
 mkdir -p config/includes.chroot/opt/qa_suite
@@ -734,6 +849,9 @@ cat > "$BINARY_DIR/isolinux/isolinux.cfg" << SYSEOF
 DEFAULT live
 TIMEOUT 5
 PROMPT 0
+# Kiosk: no permitir editar parámetros del kernel ni abrir la línea de comandos
+NOESCAPE 1
+ALLOWOPTIONS 0
 
 LABEL live
   MENU LABEL Start Diagnost-Donor Live (Fast USB Boot)
@@ -790,20 +908,39 @@ fi
 
 [ -n "$MMX64" ] && cp "$MMX64" "$BINARY_DIR/EFI/BOOT/mmx64.efi"
 
+# Bloqueo de GRUB: las entradas arrancan sin contraseña (--unrestricted), pero editar
+# parámetros ('e') o abrir la consola ('c') requiere el superusuario. Si no se define
+# GRUB_ADMIN_PASSWORD al compilar, se usa una contraseña aleatoria que no se guarda
+# (edición deshabilitada de forma permanente para esa ISO).
+GRUB_LOCK=""
+GRUB_ENTRY_FLAGS=""
+GRUB_PW="${GRUB_ADMIN_PASSWORD:-$(head -c 32 /dev/urandom | base64 | tr -d '\n')}"
+GRUB_PW_HASH=$(printf '%s\n%s\n' "$GRUB_PW" "$GRUB_PW" | grub-mkpasswd-pbkdf2 2>/dev/null | grep -o 'grub\.pbkdf2\.sha512\.[^ ]*' || true)
+unset GRUB_PW
+if [ -n "$GRUB_PW_HASH" ]; then
+  GRUB_LOCK="set superusers=\"admin\"
+password_pbkdf2 admin $GRUB_PW_HASH"
+  GRUB_ENTRY_FLAGS="--unrestricted"
+  echo "  ✔ GRUB bloqueado: edición de parámetros y consola protegidas por contraseña"
+else
+  echo "  ⚠ grub-mkpasswd-pbkdf2 no disponible: GRUB queda sin bloqueo de edición"
+fi
+
 # Crear grub.cfg principal del ISO (en /boot/grub/)
 cat > "$BINARY_DIR/boot/grub/grub.cfg" << GRUBEOF
 set timeout=2
 set default=0
+$GRUB_LOCK
 
 insmod all_video
 insmod gfxterm
 
-menuentry "Diagnost-Donor Live (v$NEW_VERSION) [Arranque rapido USB]" {
+menuentry "Diagnost-Donor Live (v$NEW_VERSION) [Arranque rapido USB]" $GRUB_ENTRY_FLAGS {
     linux $VMLINUZ_REL boot=live live-media-path=/live scan-delay=1 rootdelay=1 username=root quiet splash loglevel=3 modprobe.blacklist=nvidia_gpu drm.kms_helper.poll=1 xe.force_probe=* i915.force_probe=*
     initrd $INITRD_REL
 }
 
-menuentry "Diagnost-Donor Live (v$NEW_VERSION) [Cargar en memoria RAM - toram]" {
+menuentry "Diagnost-Donor Live (v$NEW_VERSION) [Cargar en memoria RAM - toram]" $GRUB_ENTRY_FLAGS {
     linux $VMLINUZ_REL boot=live toram live-media-path=/live scan-delay=1 rootdelay=1 username=root quiet splash loglevel=3 modprobe.blacklist=nvidia_gpu drm.kms_helper.poll=1 xe.force_probe=* i915.force_probe=*
     initrd $INITRD_REL
 }

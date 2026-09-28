@@ -49,7 +49,8 @@ if ! command -v apt-get >/dev/null 2>&1; then
 
     chmod +x "$SCRIPT_DIR/build_inside_container.sh"
     cd "$WORK_DIR"
-    docker run --privileged --rm -e DEBIAN_FRONTEND=noninteractive $CA_MOUNT -v "$WORK_DIR:/work" -w /work ubuntu:24.04 bash ./builder/build_inside_container.sh
+    # GRUB_ADMIN_PASSWORD (opcional) se pasa al contenedor solo si está definida en el host
+    docker run --privileged --rm -e DEBIAN_FRONTEND=noninteractive -e GRUB_ADMIN_PASSWORD $CA_MOUNT -v "$WORK_DIR:/work" -w /work ubuntu:24.04 bash ./builder/build_inside_container.sh
     exit 0
   else
     echo "❌ Error: Se requiere Docker instalado para compilar ISOs de Ubuntu en CachyOS."

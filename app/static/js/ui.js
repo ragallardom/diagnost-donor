@@ -317,7 +317,7 @@ function updateThermalTab(thermal) {
         </div>
       `).join("");
     } else {
-      fansContainer.innerHTML = `<div class="sensor-item">Fan Principal: Girando OK</div>`;
+      fansContainer.innerHTML = `<div class="sensor-item"><span>Ventilador</span><strong style="color: #94a3b8;">Sin lectura de RPM (la BIOS no la expone)</strong></div>`;
     }
   }
 
@@ -327,11 +327,56 @@ function updateThermalTab(thermal) {
       tempsContainer.innerHTML = thermal.temperatures.map(t => `
         <div class="sensor-item">
           <span>${t.label}</span>
-          <strong style="color: ${t.temp_c > 80 ? 'var(--danger-red)' : 'var(--success-green)'}">${Math.round(t.temp_c)} °C</strong>
+          <strong style="color: ${temperatureColor(t.temp_c)}">${Math.round(t.temp_c)} °C</strong>
         </div>
       `).join("");
+    } else {
+      tempsContainer.innerHTML = `<div class="sensor-item"><span>Temperatura</span><strong style="color: #94a3b8;">Sin sensor de temperatura expuesto</strong></div>`;
     }
   }
+
+  updateThermalHealth(thermal.health);
+}
+
+// Color for a temperature reading: normal / high / at the cleaning threshold (95 °C).
+function temperatureColor(tempC) {
+  if (tempC >= 95) return "var(--danger-red)";
+  if (tempC >= 85) return "var(--warning-amber)";
+  return "var(--success-green)";
+}
+
+const THERMAL_LEVEL_TITLES = {
+  ok: "Salud térmica: correcta",
+  watch: "Salud térmica: vigilar",
+  clean: "Salud térmica: requiere mantenimiento",
+  unknown: "Salud térmica: sin datos"
+};
+
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// General view: live throttling status and cleaning / thermal paste recommendation.
+function updateThermalHealth(health) {
+  const box = document.getElementById("thermal-health");
+  if (!box || !health) return;
+
+  let throttleText = "No disponible en esta CPU";
+  if (health.throttling_supported) {
+    if (health.throttling_now) throttleText = "ACTIVO ahora";
+    else if (health.throttle_events_since_boot) throttleText = `Sí, ${health.throttle_events_since_boot} eventos desde el arranque`;
+    else throttleText = "No";
+  }
+  const tjmax = health.tjmax_c ? ` · Límite TjMax: ${health.tjmax_c} °C` : "";
+
+  box.className = `thermal-health level-${health.level}`;
+  box.style.display = "block";
+  box.innerHTML = `
+    <div class="th-title"><span>${THERMAL_LEVEL_TITLES[health.level] || THERMAL_LEVEL_TITLES.unknown}</span></div>
+    <div>${escapeHtml(health.message)}</div>
+    ${health.prochot_note ? `<div class="th-reco">${escapeHtml(health.prochot_note)}</div>` : ""}
+    <div class="th-meta">Throttling térmico: <strong>${throttleText}</strong>${tjmax} · Umbral de mantenimiento: ≥${Math.round(health.hot_threshold_c)} °C sostenido</div>
+  `;
 }
 
 let _lastInternalStorageJson = "";

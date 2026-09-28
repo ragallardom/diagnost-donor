@@ -57,6 +57,17 @@ async function refreshTelemetry() {
   }
 }
 
+// Poll telemetry ~1s apart without overlapping requests: the next poll is
+// scheduled only after the previous one has finished.
+const TELEMETRY_INTERVAL_MS = 1000;
+
+async function startTelemetryLoop() {
+  const started = Date.now();
+  await refreshTelemetry();
+  const elapsed = Date.now() - started;
+  setTimeout(startTelemetryLoop, Math.max(0, TELEMETRY_INTERVAL_MS - elapsed));
+}
+
 // 3. FAST MULTI-CORE CPU BENCHMARK & STABILITY TEST
 async function runCpuQuickTest() {
   const btn = document.getElementById("btn-run-cputest");
@@ -235,11 +246,7 @@ async function executeOpalRevertConfirmed() {
   if (logPre) logPre.innerText = `[1/5] Iniciando desbloqueo PSID en ${device}...\n`;
 
   try {
-    const res = await fetch("/api/opal-revert", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ device, psid })
-    });
+    const res = await apiPost("/api/opal-revert", { device, psid });
     const data = await res.json();
 
     if (logPre && data.log) {
@@ -314,13 +321,9 @@ async function startStressTest() {
   setStressUiState(true);
 
   try {
-    const res = await fetch("/api/stress/start", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        components: components,
-        level: currentStressLevel
-      })
+    const res = await apiPost("/api/stress/start", {
+      components: components,
+      level: currentStressLevel
     });
     const data = await res.json();
 
@@ -338,7 +341,7 @@ async function startStressTest() {
 
 async function stopStressTest() {
   try {
-    await fetch("/api/stress/stop", { method: "POST" });
+    await apiPost("/api/stress/stop");
   } catch (e) {
     console.warn("Error abortando estrés:", e);
   }
@@ -394,7 +397,7 @@ async function executePowerAction() {
   }
 
   try {
-    await fetch(endpoint, { method: "POST" });
+    await apiPost(endpoint);
   } catch (err) {
     if (resultMsg) {
       resultMsg.innerText = `Comando enviado: ${actionLabel}`;

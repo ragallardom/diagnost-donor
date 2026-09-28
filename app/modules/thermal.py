@@ -3,11 +3,18 @@
 Thermal & Fan Diagnostic Module - Robust Multi-source
 Reads CPU temperatures from /sys/class/thermal/thermal_zone*, /sys/class/hwmon,
 thinkpad_acpi, hp-wmi, and lm-sensors fallback.
+
+Also reports CPU thermal health (throttling, sustained heat and the cleaning /
+thermal paste recommendation) through thermal_health.ThermalMonitor.
+Values the hardware does not expose are reported as missing, never invented.
 """
 
 import os
 import glob
-import subprocess
+
+from thermal_health import ThermalMonitor
+
+_MONITOR = ThermalMonitor()
 
 def get_thermal_and_fans():
     cpu_temps = []
@@ -153,26 +160,33 @@ def get_thermal_and_fans():
         except Exception:
             pass
 
-    # Default fallback if no fans are exposed by ACPI (passive cooling or OS default)
-    if not fans:
-        fans.append({
-            'label': 'Ventilador Principal (ACPI)',
-            'rpm': 2400,
-            'status': 'Girando OK (Control Automático BIOS)'
-        })
-
     all_temperatures = cpu_temps + other_temps
-    if not all_temperatures:
-        all_temperatures.append({
-            'label': 'CPU Core Sensor',
-            'temp_c': 45.0,
-            'status': 'Normal'
-        })
 
     return {
         'temperatures': all_temperatures[:6],  # Top 6 prioritized sensors
-        'fans': fans
+        # Empty when the BIOS/EC does not expose fan RPM (the UI says so).
+        'fans': fans,
+        'health': _MONITOR.sample(),
     }
+
+
+def read_fan_rpms():
+    """Fan RPM readings, or None when no fan sensor is exposed. Stateless."""
+    rpms = []
+    for finput in glob.glob('/sys/class/hwmon/hwmon*/fan*_input'):
+        try:
+            with open(finput, 'r') as f:
+                rpms.append(int(f.read().strip()))
+        except Exception:
+            pass
+    try:
+        with open('/proc/acpi/ibm/fan', 'r') as f:
+            for line in f:
+                if line.startswith('speed:'):
+                    rpms.append(int(line.split(':')[1].strip()))
+    except Exception:
+        pass
+    return rpms or None
 
 if __name__ == '__main__':
     import json
