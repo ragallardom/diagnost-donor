@@ -94,6 +94,7 @@ wget -O Aplicaciones/google-chrome-stable_current_amd64.deb https://dl.google.co
   * Ejecuta pruebas no destructivas en LBA 0 y bloques secundarios similares a las de Lenovo UEFI Diagnostics.
   * Si cualquiera de las dos pruebas de lectura (o ambas) falla, el sistema alerta automáticamente con `Posible bloqueo por cifrado TCG Opal` y orienta al técnico hacia el proceso de desbloqueo.
 * **Desbloqueo TCG Opal / PSID Revert:**
+  * Solo se aplica a SSD: NVMe o SATA SSD internos y SSD externos por USB. Los pendrives, discos duros (HDD) y tarjetas SD/eMMC no se consultan ni se ofrecen para desbloqueo; en un HDD, un fallo de lectura se informa como error de lectura y no como bloqueo Opal.
   * Escáner QR optimizado para pantallas de teléfonos móviles y cámaras web de baja resolución.
   * **Receptor Bluetooth Android nativo (OBEX):** Permite emparejar el celular y compartir el código PSID directamente por Bluetooth sin instalar aplicaciones ni usar redes locales.
   * Reversión de discos bloqueados con `sedutil-cli` y reseteo integral de particiones (`wipefs` + `parted`).

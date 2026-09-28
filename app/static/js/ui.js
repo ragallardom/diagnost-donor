@@ -410,7 +410,10 @@ function updateStorageTab(storage) {
           const hasReadTests = Boolean(s.device_read_test && s.nvme_read_test);
           const devReadPassed = s.device_read_test === 'PASSED';
           const nvmeReadPassed = s.nvme_read_test === 'PASSED';
-          const isOpal = hasReadTests && (!devReadPassed || !nvmeReadPassed);
+          // Opal only applies to SSDs; on HDDs a failed read is a plain read error.
+          const opalApplicable = s.opal_applicable !== false;
+          const readFailed = hasReadTests && (!devReadPassed || !nvmeReadPassed);
+          const isOpal = opalApplicable && readFailed;
 
           let readSectionHtml = '';
           if (s.device_read_test && s.nvme_read_test) {
@@ -426,7 +429,15 @@ function updateStorageTab(storage) {
           }
 
           let opalAlertHtml = '';
-          if (isOpal) {
+          if (readFailed && !opalApplicable) {
+            opalAlertHtml = `
+              <div class="card-spec-item" style="background: rgba(239, 68, 68, 0.08); border-left: 3px solid #ef4444; border-radius: 4px; padding: 0.45rem 0.6rem; margin-top: 0.35rem;">
+                <div class="spec-value spec-value-detail" style="color: #f87171; font-weight: 700; font-size: 0.82rem;">
+                  Error de lectura del disco
+                </div>
+              </div>
+            `;
+          } else if (isOpal) {
             opalAlertHtml = `
               <div class="card-spec-item" style="background: rgba(239, 68, 68, 0.08); border-left: 3px solid #ef4444; border-radius: 4px; padding: 0.45rem 0.6rem; margin-top: 0.35rem; display: flex; flex-direction: column; gap: 0.2rem;">
                 <div class="spec-value spec-value-detail" style="color: #f87171; font-weight: 700; font-size: 0.82rem;">
@@ -763,6 +774,8 @@ function updateDriveSelector(storage) {
   } else if (storage.internal || storage.usb) {
     driveList = [...(storage.internal || []), ...(storage.usb || [])];
   }
+  // Opal unlock only targets SSDs (no pen drives, HDDs or SD/eMMC).
+  driveList = driveList.filter(s => s.opal_applicable !== false);
 
   if (driveList.length === 0) return;
 

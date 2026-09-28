@@ -19,6 +19,33 @@ import time
 
 _ETH_LOOPBACK_CACHE = {}
 
+# A cable without loopback plug is re-probed at most this often (a verified
+# loopback stays cached until the cable is unplugged). Keeps the 1 s telemetry cheap.
+LOOPBACK_RETEST_SEC = 5.0
+
+# Wi-Fi scans run in the background this often. The 1 s poll only reads the
+# list NetworkManager already has (`--rescan no`), so it never waits for a scan.
+WIFI_RESCAN_SEC = 10.0
+_wifi_rescan = {"proc": None, "last": 0.0}
+
+
+def _trigger_wifi_rescan():
+    """Start `nmcli dev wifi rescan` without waiting for it (at most every WIFI_RESCAN_SEC)."""
+    proc = _wifi_rescan["proc"]
+    if proc is not None and proc.poll() is None:
+        return  # previous scan still running
+    now = time.monotonic()
+    if _wifi_rescan["last"] and now - _wifi_rescan["last"] < WIFI_RESCAN_SEC:
+        return
+    try:
+        _wifi_rescan["proc"] = subprocess.Popen(
+            ['nmcli', 'dev', 'wifi', 'rescan'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        _wifi_rescan["last"] = now
+    except Exception:
+        pass
+
 
 def test_ethernet_loopback(dev, timeout_s=0.12):
     """
@@ -27,8 +54,11 @@ def test_ethernet_loopback(dev, timeout_s=0.12):
     directly back to the receiver without external network infrastructure.
     """
     global _ETH_LOOPBACK_CACHE
-    if _ETH_LOOPBACK_CACHE.get(dev, {}).get("verified"):
-        return True, _ETH_LOOPBACK_CACHE[dev].get("rtt_ms", 0.1)
+    cached = _ETH_LOOPBACK_CACHE.get(dev, {})
+    if cached.get("verified"):
+        return True, cached.get("rtt_ms", 0.1)
+    if cached.get("no_echo_at") and time.monotonic() - cached["no_echo_at"] < LOOPBACK_RETEST_SEC:
+        return False, "no_echo"
 
     if os.geteuid() != 0:
         return False, "not_permitted"
@@ -79,6 +109,7 @@ def test_ethernet_loopback(dev, timeout_s=0.12):
                 except Exception:
                     pass
 
+        _ETH_LOOPBACK_CACHE[dev] = {"verified": False, "no_echo_at": time.monotonic()}
         return False, "no_echo"
     except Exception as e:
         return False, str(e)
@@ -88,6 +119,15 @@ def test_ethernet_loopback(dev, timeout_s=0.12):
                 sock.close()
             except Exception:
                 pass
+
+
+def _is_admin_up(dev_path):
+    """True when the interface has IFF_UP set (no need to run `ip link set up`)."""
+    try:
+        with open(f"{dev_path}/flags", "r") as f:
+            return bool(int(f.read().strip(), 16) & 0x1)
+    except Exception:
+        return False
 
 
 def get_ethernet_status():
@@ -102,11 +142,12 @@ def get_ethernet_status():
             if os.path.exists(f"{dev_path}/wireless") or os.path.exists(f"{dev_path}/phy80211"):
                 continue
 
-            # Bring interface UP so carrier sensing is active
-            try:
-                subprocess.run(['ip', 'link', 'set', dev, 'up'], capture_output=True, timeout=1)
-            except Exception:
-                pass
+            # Bring interface UP so carrier sensing is active (only when it is down)
+            if not _is_admin_up(dev_path):
+                try:
+                    subprocess.run(['ip', 'link', 'set', dev, 'up'], capture_output=True, timeout=1)
+                except Exception:
+                    pass
 
             is_physical = os.path.exists(f"{dev_path}/device")
             carrier_file = f"{dev_path}/carrier"
@@ -241,11 +282,12 @@ def get_wifi_status():
                 subprocess.run(['nmcli', 'radio', 'wifi', 'on'], capture_output=True, timeout=3)
                 wifi_enabled = True
 
-            res_conn = subprocess.run(['nmcli', '-t', '-f', 'ACTIVE,SSID,SIGNAL,DEVICE', 'dev', 'wifi'], capture_output=True, text=True, timeout=5)
-            
-            if res_conn.returncode != 0 or not res_conn.stdout.strip():
-                subprocess.run(['nmcli', 'dev', 'wifi', 'rescan'], capture_output=True, timeout=5)
-                res_conn = subprocess.run(['nmcli', '-t', '-f', 'ACTIVE,SSID,SIGNAL,DEVICE', 'dev', 'wifi'], capture_output=True, text=True, timeout=5)
+            # Keep the list fresh in the background, read it without waiting for a scan.
+            _trigger_wifi_rescan()
+            res_conn = subprocess.run(
+                ['nmcli', '-t', '-f', 'ACTIVE,SSID,SIGNAL,DEVICE', 'dev', 'wifi', 'list', '--rescan', 'no'],
+                capture_output=True, text=True, timeout=5
+            )
 
             if res_conn.returncode == 0:
                 lines = res_conn.stdout.strip().split('\n')
