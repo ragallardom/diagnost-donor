@@ -119,22 +119,51 @@ class SendTests(unittest.TestCase):
         pair.assert_not_called()
         self.assertEqual(calls['create'], 1)
 
-    def test_connection_failure_pairs_once_then_retries(self):
-        fake, calls = self.gdbus(['complete'], create_fail=1)
+    def test_obexd_failure_pairs_once_then_uses_the_direct_push(self):
+        fake, calls = self.gdbus(['complete'], create_fail=5)
         with mock.patch('bluetooth_send._gdbus', side_effect=fake), mock.patch('bluetooth_send.time.sleep'), \
-             mock.patch('bluetooth_send._pair') as pair:
+             mock.patch('bluetooth_send._pair') as pair, mock.patch('bluetooth_send.push_direct') as direct:
             res = bs.send_report('AA:BB:CC:DD:EE:01', self.name)
         self.assertTrue(res['success'], res)
         pair.assert_called_once_with('AA:BB:CC:DD:EE:01')
-        self.assertEqual(calls['create'], 2)
+        direct.assert_called_once()
 
-    def test_persistent_failure_reports_error_without_looping(self):
-        fake, calls = self.gdbus([], create_fail=5)
+    def test_both_paths_failing_reports_both_reasons(self):
+        fake, _ = self.gdbus([], create_fail=5)
         with mock.patch('bluetooth_send._gdbus', side_effect=fake), mock.patch('bluetooth_send.time.sleep'), \
-             mock.patch('bluetooth_send._pair'):
+             mock.patch('bluetooth_send._pair'), mock.patch('bluetooth_send.push_direct', side_effect=RuntimeError('sin canal')):
             res = bs.send_report('AA:BB:CC:DD:EE:01', self.name)
         self.assertFalse(res['success'])
-        self.assertEqual(calls['create'], 2)
+        self.assertIn('Host is down', res['message'])
+        self.assertIn('sin canal', res['message'])
+
+    def test_rejection_in_the_direct_push_is_final(self):
+        fake, _ = self.gdbus([], create_fail=5)
+        with mock.patch('bluetooth_send._gdbus', side_effect=fake), mock.patch('bluetooth_send.time.sleep'), \
+             mock.patch('bluetooth_send._pair'), \
+             mock.patch('bluetooth_send.push_direct', side_effect=RuntimeError('El celular rechazó o canceló el archivo')):
+            res = bs.send_report('AA:BB:CC:DD:EE:01', self.name)
+        self.assertEqual(res['message'], 'El celular rechazó o canceló el archivo')
+
+    def test_sendfile_is_retried_while_the_interface_is_not_exported(self):
+        """The reported bug: SendFile -> UnknownObject 'doesn't exist' right after CreateSession."""
+        fake, calls = self.gdbus(['complete'])
+        attempts = {'n': 0}
+
+        def flaky(args, timeout=10):
+            if 'SendFile' in ' '.join(args):
+                attempts['n'] += 1
+                if attempts['n'] < 3:
+                    raise RuntimeError('GDBus.Error:org.freedesktop.DBus.Error.UnknownObject: Method "SendFile" '
+                                       'with signature "s" on interface "org.bluez.obex.ObjectPush1" doesn\'t exist')
+            return fake(args, timeout)
+
+        with mock.patch('bluetooth_send._gdbus', side_effect=flaky), mock.patch('bluetooth_send.time.sleep'), \
+             mock.patch('bluetooth_send.push_direct') as direct:
+            res = bs.send_report('AA:BB:CC:DD:EE:01', self.name)
+        self.assertTrue(res['success'], res)
+        self.assertEqual(attempts['n'], 3)
+        direct.assert_not_called()
 
     def test_timeout_waiting_for_the_phone(self):
         fake, _ = self.gdbus(['active'] * 200)
@@ -144,6 +173,100 @@ class SendTests(unittest.TestCase):
             res = bs.send_report('AA:BB:CC:DD:EE:01', self.name)
         self.assertFalse(res['success'])
         self.assertIn('Tiempo agotado', res['message'])
+
+
+class DirectObexTests(unittest.TestCase):
+    def test_sdp_request_and_channel_extraction(self):
+        req = bs.sdp_request(0x1105)
+        self.assertEqual(req[0], 0x06)
+        self.assertEqual(int.from_bytes(req[3:5], 'big'), len(req) - 5)
+        # ProtocolDescriptorList: L2CAP(0x0100) then RFCOMM(0x0003) on channel 12
+        attrs = bytes.fromhex('3514' '0900043510' '35031901 00' '35051900 03080c'.replace(' ', ''))
+        self.assertEqual(bs.sdp_rfcomm_channel(attrs), 12)
+        self.assertIsNone(bs.sdp_rfcomm_channel(b'\x35\x03\x19\x01\x00'))
+
+    def test_sdp_response_parsing(self):
+        attrs = b'\x35\x05\x19\x00\x03\x08\x0c'
+        resp = b'\x07' + (1).to_bytes(2, 'big') + (len(attrs) + 3).to_bytes(2, 'big') + len(attrs).to_bytes(2, 'big') + attrs + b'\x00'
+        self.assertEqual(bs.sdp_parse_response(resp), (attrs, b'\x00'))
+        with self.assertRaises(RuntimeError):
+            bs.sdp_parse_response(b'\x01\x00\x00')
+
+    def test_put_packets_single_and_multi(self):
+        (code, pkt), = bs.obex_put_packets('a.html', b'hello')
+        self.assertEqual(code, 0x82)
+        self.assertEqual(int.from_bytes(pkt[1:3], 'big'), len(pkt))
+        self.assertIn('a.html'.encode('utf-16-be'), pkt)
+        self.assertTrue(pkt.endswith(b'\x49\x00\x08hello'))
+        data = bytes(range(256)) * 40                     # 10 KB: needs several packets
+        packets = bs.obex_put_packets('big.html', data, conn_id=b'\x00\x00\x00\x01', max_packet=1024)
+        self.assertGreater(len(packets), 5)
+        self.assertEqual([c for c, _ in packets[:-1]], [0x02] * (len(packets) - 1))
+        self.assertEqual(packets[-1][0], 0x82)
+        self.assertTrue(all(len(p) <= 1024 for _, p in packets))
+        self.assertGreater(sum(len(p) for _, p in packets), len(data))
+
+    def test_headers_parser_finds_connection_id(self):
+        self.assertEqual(bs._obex_headers(b'\xCB\x00\x00\x00\x07\x01\x00\x05\x00\x00')[0xCB], b'\x00\x00\x00\x07')
+
+    def test_full_push_against_a_scripted_phone(self):
+        sent = []
+        replies = [bytes.fromhex('a0000c10002000cb00000005'),   # CONNECT ok + connection id 5
+                   bytes.fromhex('a00003')]                     # PUT final ok
+
+        class Phone:
+            def __init__(self, *a):
+                self.buf = b''
+
+            def settimeout(self, t): pass
+            def connect(self, addr): self.addr = addr
+            def close(self): pass
+
+            def send(self, data):
+                sent.append(data)
+                if data[0] in (0x80, 0x82, 0x02):
+                    self.buf += replies.pop(0)
+
+            def recv(self, n):
+                out, self.buf = self.buf[:n], self.buf[n:]
+                return out
+
+        tmp = tempfile.NamedTemporaryFile(suffix='.html', delete=False)
+        tmp.write(b'<html>x</html>')
+        tmp.close()
+        self.addCleanup(os.unlink, tmp.name)
+        with mock.patch('bluetooth_send.find_opp_channel', return_value=12), \
+             mock.patch('bluetooth_send.socket.socket', Phone):
+            bs.push_direct('AA:BB:CC:DD:EE:01', tmp.name)
+        self.assertEqual(sent[0][0], 0x80)
+        self.assertEqual(sent[1][0], 0x82)
+        self.assertIn(b'\xCB\x00\x00\x00\x05', sent[1])       # connection id is echoed
+        self.assertIn(b'<html>x</html>', sent[1])
+        self.assertEqual(sent[-1][0], 0x81)                       # DISCONNECT
+
+    def test_phone_refusing_the_put_is_reported(self):
+        replies = [bytes.fromhex('a0000710002000'), bytes.fromhex('c30003')]   # CONNECT ok, PUT forbidden
+
+        class Phone:
+            def __init__(self, *a): self.buf = b''
+            def settimeout(self, t): pass
+            def connect(self, addr): pass
+            def close(self): pass
+            def send(self, data):
+                if data[0] in (0x80, 0x82):
+                    self.buf += replies.pop(0)
+            def recv(self, n):
+                out, self.buf = self.buf[:n], self.buf[n:]
+                return out
+
+        tmp = tempfile.NamedTemporaryFile(suffix='.html', delete=False)
+        tmp.write(b'x')
+        tmp.close()
+        self.addCleanup(os.unlink, tmp.name)
+        with mock.patch('bluetooth_send.find_opp_channel', return_value=1), mock.patch('bluetooth_send.socket.socket', Phone):
+            with self.assertRaises(RuntimeError) as ctx:
+                bs.push_direct('AA:BB:CC:DD:EE:01', tmp.name)
+        self.assertIn('rechaz', str(ctx.exception))
 
 
 if __name__ == '__main__':

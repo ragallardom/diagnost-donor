@@ -11,6 +11,8 @@ paired, one "Just Works" pairing (no code to type) is tried and the send retried
 import glob
 import os
 import re
+import socket
+import struct
 import subprocess
 import tempfile
 import time
@@ -154,13 +156,26 @@ def _transfer_status(transfer):
     return m.group(1) if m else ''
 
 
+def _send_file_call(session, path, wait=8.0):
+    """SendFile, retrying while obexd has not exported the ObjectPush1 interface yet."""
+    deadline = time.monotonic() + wait
+    while True:
+        try:
+            return _gdbus(['--dest', OBEX, '--object-path', session,
+                           '--method', 'org.bluez.obex.ObjectPush1.SendFile', path], 15)
+        except RuntimeError as exc:
+            missing = 'UnknownObject' in str(exc) or "doesn't exist" in str(exc) or 'UnknownMethod' in str(exc)
+            if not missing or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.5)
+
+
 def _push(address, path):
     session = _path(_gdbus(['--dest', OBEX, '--object-path', '/org/bluez/obex',
                             '--method', 'org.bluez.obex.Client1.CreateSession', address,
                             "{'Target': <'opp'>}"], 30), '/org/bluez/obex/client/session')
     try:
-        out = _gdbus(['--dest', OBEX, '--object-path', session,
-                      '--method', 'org.bluez.obex.ObjectPush1.SendFile', path], 15)
+        out = _send_file_call(session, path)
         transfer = _path(out, '/org/bluez/obex/client/session')
         deadline = time.monotonic() + SEND_TIMEOUT_SEC
         while time.monotonic() < deadline:
@@ -177,6 +192,148 @@ def _push(address, path):
                     '--method', 'org.bluez.obex.Client1.RemoveSession', session], 5)
         except Exception:
             pass
+
+
+# ── Direct OBEX Object Push over RFCOMM (fallback when the obexd D-Bus client misbehaves) ──
+
+OPP_UUID = 0x1105
+
+
+def sdp_request(uuid16, cont=b'\x00', tid=1):
+    """ServiceSearchAttributeRequest for one UUID16, asking for ProtocolDescriptorList."""
+    params = (b'\x35\x03\x19' + struct.pack('>H', uuid16) + b'\x04\x00'
+              + b'\x35\x03\x09\x00\x04' + cont)
+    return struct.pack('>BHH', 0x06, tid, len(params)) + params
+
+
+def sdp_parse_response(data):
+    """(attribute bytes, continuation state) of a ServiceSearchAttributeResponse."""
+    if len(data) < 9 or data[0] != 0x07:
+        raise RuntimeError('Respuesta SDP inválida')
+    (_tid, plen) = struct.unpack('>HH', data[1:5])
+    (count,) = struct.unpack('>H', data[5:7])
+    attrs = data[7:7 + count]
+    cont = data[7 + count:5 + plen] or b'\x00'
+    return attrs, cont
+
+
+def sdp_rfcomm_channel(attr_bytes):
+    """RFCOMM channel from the ProtocolDescriptorList bytes (UUID 0x0003 followed by uint8)."""
+    m = re.search(rb'\x19\x00\x03\x08(.)', attr_bytes, re.S)
+    return m.group(1)[0] if m else None
+
+
+def _recv_exact(sock, n):
+    buf = b''
+    while len(buf) < n:
+        chunk = sock.recv(n - len(buf))
+        if not chunk:
+            raise RuntimeError('El celular cerró la conexión')
+        buf += chunk
+    return buf
+
+
+def find_opp_channel(address):
+    sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_SEQPACKET, socket.BTPROTO_L2CAP)
+    sock.settimeout(10)
+    try:
+        sock.connect((address, 1))
+        cont, attrs, tid = b'\x00', b'', 1
+        for _ in range(8):
+            sock.send(sdp_request(OPP_UUID, cont, tid))
+            part, cont = sdp_parse_response(sock.recv(4096))
+            attrs += part
+            if cont == b'\x00':
+                break
+            tid += 1
+    finally:
+        sock.close()
+    channel = sdp_rfcomm_channel(attrs)
+    if channel is None:
+        raise RuntimeError('El celular no ofrece recepción de archivos por Bluetooth')
+    return channel
+
+
+def _obex_headers(data):
+    """{header id: value bytes} from a block of OBEX headers."""
+    out, i = {}, 0
+    while i < len(data):
+        hid, kind = data[i], data[i] & 0xC0
+        if kind in (0x00, 0x40):
+            (ln,) = struct.unpack('>H', data[i + 1:i + 3])
+            out[hid] = data[i + 3:i + ln]
+            i += ln
+        elif kind == 0x80:
+            out[hid] = data[i + 1:i + 2]
+            i += 2
+        else:
+            out[hid] = data[i + 1:i + 5]
+            i += 5
+    return out
+
+
+def obex_connect_packet():
+    return struct.pack('>BHBBH', 0x80, 7, 0x10, 0x00, 0x2000)
+
+
+def obex_put_packets(name, data, conn_id=None, max_packet=0x2000):
+    """PUT packets for one object: name + length in the first, EndOfBody in the last."""
+    head = b''
+    if conn_id is not None:
+        head += b'\xCB' + conn_id
+    uname = name.encode('utf-16-be') + b'\x00\x00'
+    head += b'\x01' + struct.pack('>H', len(uname) + 3) + uname
+    head += b'\xC3' + struct.pack('>I', len(data))
+    limit = min(max_packet, 0x2000)
+    packets, first, pos = [], True, 0
+    while True:
+        hdr = head if first else (b'\xCB' + conn_id if conn_id is not None else b'')
+        size = max(64, limit - 3 - len(hdr) - 3)     # packet header + body header overhead
+        chunk = data[pos:pos + size]
+        pos += len(chunk)
+        final = pos >= len(data)
+        body = (b'\x49' if final else b'\x48') + struct.pack('>H', len(chunk) + 3) + chunk
+        payload = hdr + body
+        packets.append((0x82 if final else 0x02, struct.pack('>BH', 0x82 if final else 0x02, len(payload) + 3) + payload))
+        first = False
+        if final:
+            return packets
+
+
+def _obex_exchange(sock, packet):
+    """Send a packet, return (response code, response bytes)."""
+    sock.send(packet)
+    head = _recv_exact(sock, 3)
+    (ln,) = struct.unpack('>H', head[1:3])
+    return head[0], head + _recv_exact(sock, ln - 3)
+
+
+def push_direct(address, path):
+    """Send `path` with a hand-made OBEX session over RFCOMM. Raises RuntimeError on failure."""
+    channel = find_opp_channel(address)
+    sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
+    sock.settimeout(SEND_TIMEOUT_SEC)   # the phone waits for the user to tap "accept"
+    try:
+        sock.connect((address, channel))
+        code, resp = _obex_exchange(sock, obex_connect_packet())
+        if code != 0xA0:
+            raise RuntimeError('El celular rechazó la conexión')
+        max_packet = struct.unpack('>H', resp[5:7])[0] if len(resp) >= 7 else 0x2000
+        conn_id = _obex_headers(resp[7:]).get(0xCB)
+        with open(path, 'rb') as f:
+            data = f.read()
+        for want, packet in obex_put_packets(os.path.basename(path), data, conn_id, max_packet):
+            code, _ = _obex_exchange(sock, packet)
+            if code not in (0x90, 0xA0):
+                raise RuntimeError('El celular rechazó o canceló el archivo')
+        try:
+            sock.send(struct.pack('>BH', 0x81, 3))
+        except OSError:
+            pass
+    except socket.timeout:
+        raise RuntimeError('Tiempo agotado: acepta el archivo en el celular')
+    finally:
+        sock.close()
 
 
 def _pair(address):
@@ -198,17 +355,22 @@ def send_report(address, name):
     except ValueError as exc:
         return {'success': False, 'message': str(exc)}
 
+    final = ('rechaz', 'Tiempo agotado')    # the phone said no / nobody tapped accept: do not retry
     try:
-        _ensure_obex()
         try:
+            _ensure_obex()
             _push(address, path)
         except RuntimeError as first:
-            # Not paired / connection refused: pair once and retry. A refusal or timeout
-            # on the phone is final, retrying would only ask the user again.
-            if 'rechaz' in str(first) or 'Tiempo agotado' in str(first):
+            if any(w in str(first) for w in final):
                 raise
+            # obexd failed (not paired, interface missing...): pair once and use the direct push.
             _pair(address)
-            _push(address, path)
+            try:
+                push_direct(address, path)
+            except (RuntimeError, OSError) as second:
+                if any(w in str(second) for w in final):
+                    raise
+                raise RuntimeError(f'{str(first)[:70]} | {str(second)[:70]}')
     except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
         return {'success': False, 'message': str(exc)[:160]}
     return {'success': True, 'message': 'Informe enviado'}
