@@ -457,7 +457,6 @@ function updateThermalHealth(health) {
   const detail = [];
   if (health.tjmax_c) detail.push(`TjMax ${health.tjmax_c} °C`);
   detail.push(`Mantenimiento si ≥${Math.round(health.hot_threshold_c)} °C sostenido`);
-  if (health.throttling_supported) detail.push(`Throttling desde el arranque: ${health.throttle_events_since_boot || 0}`);
 
   box.className = `thermal-health level-${health.level}`;
   box.style.display = "block";

@@ -91,13 +91,18 @@ function buildReportHtml(comments, stress) {
     }).join("");
     const t = stress.max_temp_c;
     const tcls = t >= TEMP_HOT_C ? "fail" : (t >= TEMP_WARN_C ? "warn" : "ok");
-    const th = stress.thermal_assessment;
-    const titles = { ok: "Enfriamiento correcto", watch: "Temperatura elevada", clean: "Mantenimiento recomendado (limpieza y pasta térmica)", unknown: "Sin datos térmicos" };
+    const th = stress.thermal_assessment || {};
+    const avg = th.sustained_avg_c ?? th.avg_c;
+    // Plain wording, no maintenance advice: what happened, not what to do about it.
+    const verdict = { ok: "", watch: "Temperaturas altas", clean: "Sobrecalentamiento" }[th.level] || "";
+    const thr = th.throttle && th.throttle.supported && th.throttle.events
+      ? `Throttling térmico: ${th.throttle.events} ${th.throttle.events === 1 ? "evento" : "eventos"} (${(th.throttle.time_ms / 1000).toFixed(1)} s)` : "";
     stressHtml = `<h2>Prueba de estrés${stress.level ? " · " + e({ quick: "Rápida", medium: "Media", deep: "Profunda" }[stress.level] || "") : ""}</h2>
       <div class="box"><table>${srows}</table></div>
       <div class="sum"><span>Temp. máx: ${t == null ? "N/D" : `<span class="b ${tcls}">${Math.round(t)} °C</span>`}</span>
+      <span>Prom.: ${avg == null ? "N/D" : Math.round(avg) + " °C"}</span>
       <span>Estado: ${stress.aborted ? "Interrumpido" : ((stress.failed_components || []).length ? "Con fallos" : "Superado")}</span></div>
-      ${th ? `<div class="sub" style="margin-top:6px">${e(titles[th.level] || "")}</div>` : ""}`;
+      ${verdict || thr ? `<div class="sub" style="margin-top:6px">${[verdict ? `<b>${verdict}</b>` : "", thr].filter(Boolean).join(" · ")}</div>` : ""}`;
   }
 
   const note = (comments || "").trim();

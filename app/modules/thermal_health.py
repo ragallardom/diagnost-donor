@@ -304,6 +304,7 @@ def evaluate_stress_samples(samples, throttle, tjmax=None, base_mhz=None,
         'hot_threshold_c': HOT_SUSTAINED_C,
         'tjmax_c': tjmax,
         'peak_c': None,
+        'avg_c': None,
         'sustained_avg_c': None,
         'sustained_hot_pct': None,
         'sustained_sec': 0,
@@ -316,6 +317,7 @@ def evaluate_stress_samples(samples, throttle, tjmax=None, base_mhz=None,
         return result
 
     result['peak_c'] = round(max(s['temp'] for s in valid), 1)
+    result['avg_c'] = round(sum(s['temp'] for s in valid) / len(valid), 1)
     sustained = [s for s in valid if s['t'] >= TURBO_WINDOW_SEC]
     if len(sustained) < MIN_SUSTAINED_SEC:
         # Short test: evaluate what we have but flag it as preliminary.
@@ -458,10 +460,7 @@ class ThermalMonitor:
             message = f'CPU a {temp:.0f} °C en reposo: posible polvo o pasta seca. ' + RECOMMENDATION_CLEAN
         elif recently_throttled:
             level = LEVEL_WATCH
-            message = 'Throttling térmico activo. Confirmar con la prueba de estrés.'
-        elif since_boot_events:
-            level = LEVEL_WATCH
-            message = f'{since_boot_events} eventos de throttling desde el arranque. Confirmar con la prueba de estrés.'
+            message = 'Sobrecalentamiento: la CPU reduce su rendimiento.'
         elif temp is None:
             level = LEVEL_UNKNOWN
             message = 'Sin sensor de temperatura de CPU.'

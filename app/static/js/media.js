@@ -14,7 +14,6 @@ let micAnimId = null;
 let audioLeftTested = false;
 let audioRightTested = false;
 let audioBothTested = false;
-let speakerMarkedBad = false;
 
 // ─────────────────────────────────────────────────────────────────
 // 1. HD CAMERA PIPELINE
@@ -245,9 +244,7 @@ async function playFrequencySweep(channel) {
 
       const count = (audioLeftTested ? 1 : 0) + (audioRightTested ? 1 : 0) + (audioBothTested ? 1 : 0);
 
-      if (speakerMarkedBad) {
-        applySpeakerBadState();
-      } else if (count === 3) {
+      if (count === 3) {
         if (statusEl) {
           statusEl.innerText = "Prueba completada (3/3): Parlantes estéreo 100% operativos";
           statusEl.style.color = "var(--success-green)";
@@ -601,42 +598,8 @@ async function recordAndPlayMic() {
   }
 }
 
-// "Suena mal": the technician flags distorted / noisy sound; the checklist turns red until reset or unflagged.
-function applySpeakerBadState() {
-  const statusEl = document.getElementById("audio-status-text");
-  const btn = document.getElementById("btn-audio-bad");
-  if (speakerMarkedBad) {
-    if (statusEl) { statusEl.innerText = "Marcado: suena mal"; statusEl.style.color = "var(--danger-red)"; }
-    if (btn) btn.classList.add("active");
-    markCheckfailed("chk-audio", "PARLANTES");
-    markCheckfailed("chk-speakers", "PARLANTES");
-  } else {
-    if (btn) btn.classList.remove("active");
-    const count = (audioLeftTested ? 1 : 0) + (audioRightTested ? 1 : 0) + (audioBothTested ? 1 : 0);
-    if (statusEl) {
-      statusEl.innerText = count === 3 ? "Prueba completada (3/3)" : `Progreso: ${count}/3`;
-      statusEl.style.color = count === 3 ? "var(--success-green)" : "var(--text-main)";
-    }
-    if (count === 3) {
-      markCheckpassed("chk-audio", "PARLANTES");
-      markCheckpassed("chk-speakers", "PARLANTES");
-    } else {
-      unmarkCheckpassed("chk-audio", `Parlantes (${count}/3)`);
-      unmarkCheckpassed("chk-speakers", `Parlantes (${count}/3)`);
-    }
-  }
-}
-
-function toggleSpeakerBad() {
-  speakerMarkedBad = !speakerMarkedBad;
-  applySpeakerBadState();
-}
-
 // 4. RESET AUDIO SWEEP & SPEAKER TESTS
 function resetAudioTest() {
-  speakerMarkedBad = false;
-  const badBtn = document.getElementById("btn-audio-bad");
-  if (badBtn) badBtn.classList.remove("active");
   audioLeftTested = false;
   audioRightTested = false;
   audioBothTested = false;

@@ -209,11 +209,16 @@ class MonitorTests(unittest.TestCase):
         m = th.ThermalMonitor()
         self.set_state(70, core_events=4)
         h = m.sample(now=0.0)
-        self.assertEqual(h['level'], th.LEVEL_WATCH)
+        # Old throttling since boot is data only: no warning, no count in the message.
+        self.assertEqual(h['level'], th.LEVEL_OK)
+        self.assertNotIn('throttling', h['message'].lower())
         self.assertEqual(h['throttle_events_since_boot'], 4)
         self.assertFalse(h['throttling_now'])
         self.set_state(70, core_events=5)
-        self.assertTrue(m.sample(now=1.0)['throttling_now'])
+        h = m.sample(now=1.0)
+        self.assertTrue(h['throttling_now'])            # active right now = overheating
+        self.assertEqual(h['level'], th.LEVEL_WATCH)
+        self.assertIn('Sobrecalentamiento', h['message'])
 
 
 if __name__ == '__main__':

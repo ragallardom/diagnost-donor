@@ -86,7 +86,7 @@ wget -O Aplicaciones/google-chrome-stable_current_amd64.deb https://dl.google.co
   * El límite por potencia (PL1/PL2) no se considera un problema: es el comportamiento normal de una laptop y no se corrige con limpieza.
   * AMD: el kernel no expone contadores de throttling; la evaluación se hace por temperatura.
 * **Recomendación de mantenimiento (limpieza y cambio de pasta térmica):**
-  * *Vista general:* recuadro "Salud térmica" con el estado de throttling y el TjMax. Mensaje corto (título + una línea; el detalle sale al pasar el cursor). Recomienda mantenimiento si la CPU se mantiene en ≥95 °C durante 60 s, o si está sobre 70 °C en reposo durante 60 s (polvo o pasta seca). Si hubo throttling desde el arranque, sugiere confirmarlo con la prueba de estrés.
+  * *Vista general:* recuadro "Térmica" con título y una línea (TjMax y umbrales al pasar el cursor). Avisa si la CPU se mantiene en ≥95 °C durante 60 s, está sobre 70 °C en reposo durante 60 s (polvo o pasta seca) o reduce su rendimiento en ese momento. El throttling acumulado desde el arranque ya no se muestra ahí: solo cuenta durante la prueba de estrés.
   * *Prueba de estrés (fase CPU):* se descartan los primeros 30 s de Turbo/PL2, donde los picos altos son normales. Se recomienda limpieza y cambio de pasta si la CPU se mantiene en **≥95 °C durante al menos la mitad de la carga sostenida**, si hay throttling térmico significativo (≥3 s o ≥10 % del tiempo), si la prueba se aborta por temperatura o si el ventilador marca 0 RPM con la CPU sobre 80 °C. Para confirmar un diagnóstico dudoso conviene usar el nivel Media o Profunda.
 
 ### Almacenamiento, diagnóstico LBA, vida útil y desbloqueo SSD
@@ -111,7 +111,7 @@ wget -O Aplicaciones/google-chrome-stable_current_amd64.deb https://dl.google.co
 
 ### Multimedia y conectividad
 * **Cámara web:** vista previa y resolución. Se aprueba solo con la pista activa y una imagen que no sea negra (obturador tapado o sensor muerto se indican).
-* **Audio:** Barrido senoidal estéreo (canal izquierdo, derecho y ambos) con control de volumen del sistema y botón **Suena mal**: marca el checklist en rojo hasta desmarcarlo o reiniciar.
+* **Audio:** Barrido senoidal estéreo (canal izquierdo, derecho y ambos) con control de volumen del sistema. Si suena mal, se marca con la ✗ del chip del checklist.
 * **Micrófono:** medidor de nivel y grabación de 3 s con comprobación de amplitud. Conectado no basta: se aprueba solo al detectar señal real; sin señal en 6 s avisa.
 * **Conectividad de red (Wi-Fi y Ethernet):**
   * **Wi-Fi:** Escaneo de redes inalámbricas cercanas (SSID y nivel de señal). El equipo nunca se conecta a ninguna red: la prueba valida la antena y el adaptador mediante el escaneo, sin conexión ni ping. Se muestran las 10 redes más fuertes (un AP por SSID) y se interpretan bien los SSID con `:`.
@@ -153,7 +153,7 @@ El objetivo es que el equipo solo pueda usarse para el diagnóstico: sin red, si
 * **Control de arranque:** Validación obligatoria de UEFI Secure Boot activo y módulo TPM 2.0 funcional al iniciar.
 
 ### Informe por Bluetooth
-* Botón **Informe** (barra superior): genera un HTML de ~4 KB, sin recursos externos y legible en el celular, con datos del equipo, resultado del checklist (con detalle por prueba), la prueba de estrés si se ejecutó (por componente, temperatura máxima y veredicto térmico) y un campo de comentarios.
+* Botón **Informe** (barra superior): genera un HTML de ~4 KB, sin recursos externos y legible en el celular, con datos del equipo, resultado del checklist (con detalle por prueba), la prueba de estrés si se ejecutó (por componente) y un campo de comentarios. En la prueba de estrés muestra temperatura máxima y promedio y, si ocurrió, el throttling térmico; el veredicto térmico es breve («Temperaturas altas» / «Sobrecalentamiento») y **sin** recomendación de mantenimiento.
 * **Enviar por Bluetooth** busca celulares cercanos (8 s), se elige uno y se envía por OBEX Object Push con `bluez-obexd` (vía `gdbus`). En el celular solo hay que tener Bluetooth visible y pulsar *Aceptar*. Si el envío vía `obexd` falla, se empareja una vez (un toque, sin códigos) y se envía con un cliente OBEX propio por RFCOMM (la cola de errores muestra ambos motivos). **Ver** muestra una vista previa.
 * El informe se guarda en `/tmp/diagnost_reports/` (RAM en el Live: no queda nada en el equipo).
 
