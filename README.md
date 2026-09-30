@@ -23,7 +23,7 @@ Si no deseas compilar la imagen desde el código fuente, puedes descargar la ISO
   * **Arranque rápido directo USB (Predeterminado):** Carga el sistema en ~15 segundos montando el sistema de archivos directamente desde el pendrive USB.
   * **Carga 100% en RAM (`toram`):** Copia íntegramente la imagen a la memoria RAM durante el inicio, permitiendo desconectar el pendrive USB una vez que la interfaz principal haya cargado.
 * **Arranque UEFI y BIOS nativo:** La ISO es de tipo híbrida (ISO-Hybrid) con partición EFI firmada. No requiere Ventoy ni gestores intermedios; se graba directamente al pendrive.
-* **Secure Boot y TPM 2.0 activos:** Por política de seguridad, el sistema verifica al iniciar que tanto Secure Boot como TPM 2.0 estén habilitados en la BIOS. Si alguno está desactivado, el script de inicio mostrará una advertencia y reiniciará el equipo tras 10 segundos.
+* **Secure Boot y TPM 2.0 activos:** Por política de seguridad, el sistema verifica al iniciar que tanto Secure Boot como TPM 2.0 estén habilitados en la BIOS. Si alguno está desactivado, el script de inicio mostrará una advertencia y reiniciará el equipo tras 30 segundos.
 
 Teclas habituales para el menú de booteo:
 * **Lenovo / Dell:** `F12`
