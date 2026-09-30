@@ -52,7 +52,7 @@ from opal_diag import (
     execute_nvme_crypto_erase,
     validate_target_device,
 )
-from stress_diag import start_stress_test, stop_stress_test, get_stress_status
+from stress_diag import start_stress_test, stop_stress_test, get_stress_status, report_gpu_result
 
 HOST = '127.0.0.1'
 PORT = 8080
@@ -354,6 +354,13 @@ class DiagnosticHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_json(start_stress_test(components=comps, level=lvl))
             except Exception as exc:
                 self.send_json({'success': False, 'message': f'Error iniciando estrés: {exc}'}, 400)
+            return
+
+        if self.path == '/api/stress/gpu-report':
+            try:
+                self.send_json(report_gpu_result(payload))
+            except Exception as exc:
+                self.send_json({'success': False, 'message': f'Informe GPU inválido: {exc}'}, 400)
             return
 
         if self.path == '/api/stress/stop':

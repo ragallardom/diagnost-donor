@@ -4,7 +4,7 @@ Hardware Stress Diagnostic Module
 Supports isolated, non-blocking stress testing for:
   - CPU (Multithreaded matrix/math load + thermal throttling check)
   - RAM (DDR3, DDR4, DDR5, LPDDR3/4/5 with bit-flip & pattern tests)
-  - SSD (Safe temporary buffered/unbuffered I/O speed and integrity test)
+  - SSD (Non-destructive O_DIRECT sequential + random reads on the real internal drives)
   - GPU / iGPU (Coordination and telemetry during WebGL 3D load)
 
 Includes automatic thermal abort (CPU >= 100°C sustained for 4+ s, or any reading >= 104°C),
@@ -16,17 +16,20 @@ and reports whether cleaning / new thermal paste is recommended.
 """
 
 import os
-import sys
 import time
-import math
 import shutil
-import random
 import threading
-import subprocess
 from datetime import datetime
 
 import thermal_health
+import stress_workers
 from thermal import read_fan_rpms
+
+VALID_COMPONENTS = ("cpu", "ram", "ssd", "gpu")
+VALID_LEVELS = ("quick", "medium", "deep")
+
+# Fraction of MemAvailable and hard cap (MB) of the RAM buffer per level.
+RAM_ALLOC = {"quick": (0.50, 4096), "medium": (0.65, 12288), "deep": (0.80, 32768)}
 
 # Global singleton runner
 _stress_runner = None
@@ -35,7 +38,15 @@ _runner_lock = threading.Lock()
 
 class HardwareStressRunner:
     def __init__(self, components=None, level="quick"):
-        self.components = components or ["cpu", "ram", "ssd", "gpu"]
+        if level not in VALID_LEVELS:
+            raise ValueError(f"Nivel de estrés inválido: {level!r}")
+        if components is None:
+            components = list(VALID_COMPONENTS)
+        if (not isinstance(components, (list, tuple)) or not components
+                or any(c not in VALID_COMPONENTS for c in components)):
+            raise ValueError(f"Componentes inválidos: {components!r}")
+        # De-duplicate but keep the requested order.
+        self.components = list(dict.fromkeys(components))
         self.level = level  # 'quick', 'medium', 'deep'
         self.is_running = False
         self.aborted = False
@@ -54,13 +65,16 @@ class HardwareStressRunner:
 
         # Determine total duration based on level and selected components
         durations_per_component = {
-            "quick":  {"cpu": 45,  "ram": 45,  "ssd": 30,  "gpu": 30},
-            "medium": {"cpu": 120, "ram": 120, "ssd": 60,  "gpu": 60},
-            "deep":   {"cpu": 300, "ram": 300, "ssd": 180, "gpu": 180},
+            # CPU: the first 30 s are Turbo (discarded by the thermal verdict), so even
+            # "quick" needs 75 s to leave a 45 s sustained window.
+            "quick":  {"cpu": 75,  "ram": 60,  "ssd": 45,  "gpu": 30},
+            "medium": {"cpu": 240, "ram": 150, "ssd": 90,  "gpu": 60},
+            "deep":   {"cpu": 600, "ram": 480, "ssd": 300, "gpu": 180},
         }
-        self.critical_temp_counter = 0
-        level_dur = durations_per_component.get(self.level, durations_per_component["quick"])
-        self.durations = {c: level_dur.get(c, 45) for c in self.components}
+        self.critical_since = None  # monotonic time the CPU first hit >=100°C (None = below)
+        level_dur = durations_per_component[self.level]
+        self.durations = {c: level_dur[c] for c in self.components}
+        self.gpu_report = None
         self.total_duration_sec = sum(self.durations.values())
 
     def log(self, message, msg_type="info"):
@@ -179,18 +193,20 @@ class HardwareStressRunner:
             self.thermal_abort = True
             return False
 
-        # 2. Sustained critical heat protection (if >= 100°C for 4+ consecutive seconds)
+        # 2. Sustained critical heat protection (if >= 100°C for 4+ seconds; time based,
+        #    because phases call this at different rates)
         if current_temp >= 100.0:
-            self.critical_temp_counter += 1
-            if self.critical_temp_counter >= 4:
+            now = time.monotonic()
+            if self.critical_since is None:
+                self.critical_since = now
+            if now - self.critical_since >= 4.0:
                 self.log(f"[ALERTA CRITICA] Temperatura de CPU sostenida a {current_temp:.1f}°C durante mas de 4s. Abortando por seguridad.", "error")
                 self.aborted = True
                 self.thermal_abort = True
                 return False
-            else:
-                self.log(f"[AVISO TERMICO] CPU a {current_temp:.1f}°C (Pico de Turbo Boost). Ventiladores respondiendo...", "warning")
+            self.log(f"[AVISO TERMICO] CPU a {current_temp:.1f}°C (Pico de Turbo Boost). Ventiladores respondiendo...", "warning")
         else:
-            self.critical_temp_counter = 0
+            self.critical_since = None
 
         return True
 
@@ -202,6 +218,8 @@ class HardwareStressRunner:
         self.logs = []
         self.thermal_abort = False
         self.thermal_assessment = None
+        self.gpu_report = None
+        self.critical_since = None
         self.max_temp_c = self.get_cpu_temp() or 0
         self.log(f"[INICIO] Iniciando suite de estrés nivel: {self.level.upper()} ({self.total_duration_sec}s total estimado).", "step")
 
@@ -250,10 +268,15 @@ class HardwareStressRunner:
                     'peak_c': round(self.max_temp_c, 1),
                 })
 
+            failed = [c for c, r in self.results.items() if r.get("passed") is False]
+            unverified = [c for c, r in self.results.items() if r.get("skipped")]
             if self.aborted:
                 self.log(f"[INFO] Prueba de estrés interrumpida a los {total_elapsed}s. Temp Máx: {self.max_temp_c:.1f}°C.", "warning")
+            elif failed:
+                self.log(f"[FALLO] Suite de estrés terminada en {total_elapsed}s con fallos en: {', '.join(c.upper() for c in failed)}. Temp Máx: {self.max_temp_c:.1f}°C.", "error")
             else:
-                self.log(f"[OK] Suite de estrés completada exitosamente en {total_elapsed}s. Temp Máx: {self.max_temp_c:.1f}°C.", "success")
+                extra = f" (sin verificar: {', '.join(c.upper() for c in unverified)})" if unverified else ""
+                self.log(f"[OK] Suite de estrés completada exitosamente en {total_elapsed}s{extra}. Temp Máx: {self.max_temp_c:.1f}°C.", "success")
 
         except Exception as exc:
             self.log(f"[ERROR] Error inesperado en el motor de estrés: {exc}", "error")
@@ -262,46 +285,23 @@ class HardwareStressRunner:
             self.current_component = None
 
     # ─────────────────────────────────────────────────────────────────
-    # 1. CPU STRESS (HEAVY MULTI-THREADED FP64 & VECTOR MATRICES)
+    # 1. CPU STRESS (ALL LOGICAL CPUs, WITH RESULT VERIFICATION)
     # ─────────────────────────────────────────────────────────────────
     def _run_cpu_stress(self, duration_sec):
         self.log(f"[CPU] Iniciando prueba rigurosa de estrés multihilo ({duration_sec}s)...", "step")
         num_cpus = os.cpu_count() or 4
-        self.log(f"[CPU] Saturando {num_cpus} hilos lógicos en paralelo (Cálculo vectorial + Matrices).", "info")
+        self.log(f"[CPU] Saturando {num_cpus} hilos lógicos en paralelo (FP + enteros + matrices + vectorial, con verificación de resultados).", "info")
 
-        stop_event = threading.Event()
-        threads = []
-        stress_proc = None
-
-        # Check if native stress-ng is installed
-        stress_ng_bin = shutil.which("stress-ng")
-        if stress_ng_bin:
-            try:
-                self.log(f"[CPU] Utilizando motor nativo stress-ng ({num_cpus} hilos, matriz + cpu all).", "info")
-                stress_proc = subprocess.Popen(
-                    [stress_ng_bin, "--cpu", str(num_cpus), "--matrix", str(num_cpus), "--timeout", f"{duration_sec}s"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
-            except Exception as e:
-                self.log(f"[CPU] Fallback a motor interno de Python: {e}", "warning")
-                stress_proc = None
-
-        # Python multi-core worker if stress-ng is not active
-        if not stress_proc:
-            def cpu_worker():
-                x = 1.00001
-                while not stop_event.is_set():
-                    # Heavy mix of transcendental, matrix and arithmetic ops
-                    for _ in range(8000):
-                        x = math.sin(x) * math.cos(x) + math.tan(x * 0.001)
-                        _ = math.sqrt(abs(x) + 1.0)
-                        _ = math.exp(math.log(abs(x) + 1.1))
-
-            for _ in range(num_cpus * 2):  # Launch 2x workers to guarantee 100% saturation
-                t = threading.Thread(target=cpu_worker, daemon=True)
-                t.start()
-                threads.append(t)
+        load = stress_workers.CpuLoad(num_cpus, duration_sec, stress_ng_bin=shutil.which("stress-ng"))
+        try:
+            load.start()
+            if load.engine == "stress-ng":
+                self.log(f"[CPU] Motor nativo stress-ng ({num_cpus} hilos: cpu-method all + matrix + vecmath, --verify).", "info")
+            else:
+                self.log(f"[CPU] stress-ng no disponible: {num_cpus} procesos Python con verificación de cálculo.", "warning")
+        except Exception as e:
+            self.log(f"[CPU] No se pudo iniciar la carga de CPU: {e}", "error")
+            load.failure = f"no se pudo iniciar la carga: {e}"
 
         start_comp = time.time()
         initial_temp = self.get_cpu_temp()
@@ -313,9 +313,14 @@ class HardwareStressRunner:
         fan_rpms = []
         fans_exposed = False
         hot_logged = False
+        calc_failure = load.failure
 
         while (time.time() - start_comp) < duration_sec:
             if self.aborted or not self.check_thermal_safety():
+                break
+            calc_failure = load.check()
+            if calc_failure:
+                self.log(f"[CPU] {calc_failure}.", "error")
                 break
             cur_t = self.get_cpu_temp()
             if cur_t is not None and cur_t > max_seen_temp:
@@ -342,27 +347,27 @@ class HardwareStressRunner:
             thermal_abort=self.thermal_abort, fans=fan_rpms if fans_exposed else None)
         self.thermal_assessment = assessment
 
-        # Cleanup CPU workers
-        if stress_proc:
-            try:
-                stress_proc.terminate()
-                stress_proc.wait(timeout=1.0)
-            except Exception:
-                pass
+        # Cleanup CPU workers; stress-ng reports --verify failures while winding down.
+        calc_failure = load.stop() or calc_failure
 
-        stop_event.set()
-        for t in threads:
-            t.join(timeout=0.5)
-
-        passed = not self.aborted and max_seen_temp < 104.0
+        passed = not self.aborted and not calc_failure and max_seen_temp < 104.0
+        if calc_failure:
+            message = f"CPU con errores de cálculo: {calc_failure}"
+        elif not passed:
+            message = "CPU con alta temperatura o abortada"
+        elif max_seen_temp:
+            message = f"CPU Estable a {int(round(max_seen_temp))}°C ({num_cpus} hilos, resultados verificados)"
+        else:
+            message = f"CPU Estable ({num_cpus} hilos, resultados verificados, sin sensor de temperatura)"
         self.results["cpu"] = {
             "passed": passed,
             "cores_tested": num_cpus,
+            "engine": load.engine,
+            "calc_errors": 1 if calc_failure else 0,
             "initial_temp_c": int(round(initial_temp)) if initial_temp is not None else None,
             "max_temp_c": int(round(max_seen_temp)) if max_seen_temp else None,
             "duration_sec": round(time.time() - start_comp, 1),
-            "message": (f"CPU Estable a {int(round(max_seen_temp))}°C ({num_cpus} Núcleos OK)" if max_seen_temp
-                        else f"CPU Estable ({num_cpus} Núcleos OK, sin sensor de temperatura)") if passed else "CPU con alta temperatura o abortada",
+            "message": message,
             "thermal": assessment,
         }
 
@@ -372,16 +377,14 @@ class HardwareStressRunner:
             self.log(f"[TERMICO] {reason}", "info")
 
         if passed:
-            self.log(f"[CPU] Prueba completada: 100% de núcleos estables (sin errores de cálculo). Temp pico: {int(round(max_seen_temp))}°C.", "success")
+            self.log(f"[CPU] Prueba completada: {num_cpus} hilos estables, resultados verificados sin errores. Temp pico: {int(round(max_seen_temp))}°C.", "success")
         else:
-            self.log(f"[CPU] Prueba finalizada. Temp pico: {int(round(max_seen_temp))}°C.", "warning")
+            self.log(f"[CPU] Prueba finalizada. Temp pico: {int(round(max_seen_temp))}°C.", "error" if calc_failure else "warning")
 
     # ─────────────────────────────────────────────────────────────────
-    # 2. RAM STRESS (AGGRESSIVE BIT-FLIP & WALKING PATTERNS)
+    # 2. RAM STRESS (FULL-COVERAGE PATTERN SWEEPS OVER THE WHOLE BUFFER)
     # ─────────────────────────────────────────────────────────────────
-    def _run_ram_stress(self, duration_sec):
-        self.log(f"[RAM] Iniciando verificación intensiva de memoria física ({duration_sec}s)...", "step")
-
+    def _ram_alloc_mb(self):
         mem_free_mb = 1024
         try:
             with open("/proc/meminfo", "r") as f:
@@ -391,163 +394,209 @@ class HardwareStressRunner:
                         break
         except Exception:
             pass
+        share, cap = RAM_ALLOC[self.level]
+        return mem_free_mb, min(cap, max(256, int(mem_free_mb * share)))
 
-        # Substantially higher memory allocation for genuine burn-in
-        if self.level == "quick":
-            alloc_mb = min(1536, max(256, int(mem_free_mb * 0.40)))
-        elif self.level == "medium":
-            alloc_mb = min(6144, max(512, int(mem_free_mb * 0.60)))
-        else:  # deep
-            alloc_mb = min(24576, max(1024, int(mem_free_mb * 0.75)))
+    def _run_ram_stress(self, duration_sec):
+        self.log(f"[RAM] Iniciando verificación intensiva de memoria física ({duration_sec}s)...", "step")
 
+        mem_free_mb, alloc_mb = self._ram_alloc_mb()
         self.log(f"[RAM] Memoria disponible: {mem_free_mb} MB. Asignando buffer de estrés: {alloc_mb} MB.", "info")
 
         bit_errors = 0
         passes = 0
+        patterns_done = 0
         start_comp = time.time()
-        # Full 8-pattern matrix including walking 1s and 0s
-        patterns = [0x55, 0xAA, 0x00, 0xFF, 0x0F, 0xF0, 0x33, 0xCC]
+        patterns = stress_workers.ram_pattern_names()
+        # The time budget starts once the buffer is allocated (page-faulting GBs can be
+        # slow) and the first pattern always completes, so a healthy but slow machine is
+        # never failed just for running out of time before verifying anything.
+        out_of_time = lambda: self.aborted or (patterns_done > 0 and (time.time() - start_comp) >= duration_sec)  # noqa: E731
+        memory_pool = []
 
         try:
             chunk_size = 32 * 1024 * 1024  # 32 MB chunks
             num_chunks = max(1, alloc_mb // 32)
-            memory_pool = []
-
-            self.log(f"[RAM] Creando {num_chunks} bloques contiguos de 32MB para prueba de bus...", "info")
+            self.log(f"[RAM] Creando {num_chunks} bloques de 32 MB (cada byte se escribe y se verifica en cada patrón)...", "info")
             for _ in range(num_chunks):
                 if self.aborted:
                     break
                 memory_pool.append(bytearray(chunk_size))
+            start_comp = time.time()
 
-            while (time.time() - start_comp) < duration_sec:
-                if self.aborted or not self.check_thermal_safety():
+            while memory_pool and not out_of_time():
+                if not self.check_thermal_safety():
                     break
-
-                for pat in patterns:
-                    if self.aborted:
+                pass_errors = 0
+                pass_complete = True
+                for kind, arg in patterns:
+                    if out_of_time() or not self.check_thermal_safety():
+                        pass_complete = False
                         break
-                    inv_pat = (~pat) & 0xFF
-
-                    # Phase 1: Heavy write
-                    for chunk in memory_pool:
-                        for i in range(0, len(chunk), 2048):
-                            chunk[i] = pat
-                            chunk[i+1] = inv_pat
-
-                    # Phase 2: Verification
-                    for chunk in memory_pool:
-                        for i in range(0, len(chunk), 2048):
-                            if chunk[i] != pat or chunk[i+1] != inv_pat:
-                                bit_errors += 1
-
-                passes += 1
-                self.log(f"[RAM] Pasada {passes}: 8 patrones verificados en {alloc_mb} MB (0 fallos).", "info")
-                self._update_overall_progress(start_comp, duration_sec, "ram")
-                time.sleep(0.5)
-
-            memory_pool.clear()
+                    errs, bad, complete = stress_workers.ram_pattern_pass(memory_pool, kind, arg, should_stop=out_of_time)
+                    if not complete:
+                        pass_complete = False
+                        break
+                    patterns_done += 1
+                    pass_errors += errs
+                    if errs:
+                        where = ", ".join(f"bloque {c}+{o // 1024} KiB" for c, o in bad)
+                        self.log(f"[RAM] {errs} bytes distintos con el patrón {stress_workers.describe_pattern(kind, arg)} ({where}).", "error")
+                    self._update_overall_progress(start_comp, duration_sec, "ram")
+                bit_errors += pass_errors
+                if pass_complete:
+                    passes += 1
+                    self.log(f"[RAM] Pasada {passes}: {len(patterns)} patrones sobre {alloc_mb} MB ({pass_errors} fallos).",
+                             "error" if pass_errors else "info")
 
         except MemoryError:
             self.log("[RAM] Límite de memoria segura alcanzado, continuando con buffers existentes.", "warning")
         except Exception as e:
             self.log(f"[RAM] Excepción controlada: {e}", "warning")
+        finally:
+            memory_pool.clear()
 
-        passed = not self.aborted and bit_errors == 0
+        # Whole buffer covered by at least one pattern and no mismatch anywhere.
+        passed = not self.aborted and bit_errors == 0 and patterns_done > 0
+        if bit_errors:
+            message = f"RAM: {bit_errors} bytes con errores detectados"
+        elif not passed:
+            message = "RAM abortada o sin patrones completados"
+        else:
+            full = f" ({passes} pasada(s) completa(s))" if passes else ""
+            message = f"RAM OK: {patterns_done} patrones{full} sobre {alloc_mb} MB, 0 errores"
         self.results["ram"] = {
             "passed": passed,
             "allocated_mb": alloc_mb,
             "bit_errors": bit_errors,
             "passes_completed": passes,
+            "patterns_verified": patterns_done,
             "duration_sec": round(time.time() - start_comp, 1),
-            "message": f"RAM OK: {passes} pasadas intensivas, 0 errores de paridad" if passed else f"RAM: {bit_errors} errores detectados"
+            "message": message,
         }
 
         if passed:
-            self.log(f"[RAM] Verificación completada: {passes} pasadas ({alloc_mb} MB probados), 0 bit-flips (DDR3/4/5 OK).", "success")
+            self.log(f"[RAM] Verificación completada: {patterns_done} patrones verificados sobre {alloc_mb} MB, 0 errores.", "success")
         else:
-            self.log(f"[RAM] Se detectaron {bit_errors} errores en la verificación de memoria.", "error" if bit_errors > 0 else "warning")
+            self.log(f"[RAM] Verificación finalizada: {bit_errors} errores, {patterns_done} patrones completados.", "error" if bit_errors > 0 else "warning")
 
     # ─────────────────────────────────────────────────────────────────
-    # 3. SSD STRESS (SUSTAINED RANDOM & SEQUENTIAL I/O + CHECKSUM)
+    # 3. SSD STRESS (REAL DRIVES, READ-ONLY O_DIRECT: SEQUENTIAL + RANDOM + RE-READ CHECK)
     # ─────────────────────────────────────────────────────────────────
+    # The live system runs from RAM (toram), so writing a file under /tmp would
+    # test memory, not the SSD; and this tool never writes to a donor's drives.
+    # The load is therefore non-destructive reads straight from each block device.
     def _run_ssd_stress(self, duration_sec):
-        self.log(f"[SSD] Iniciando prueba de rendimiento I/O sostenido e integridad ({duration_sec}s)...", "step")
-
-        test_file_path = "/tmp/ssd_stress_test.bin"
-        file_size_mb = 256 if self.level == "quick" else (512 if self.level == "medium" else 1024)
+        self.log(f"[SSD] Iniciando prueba de lectura sostenida directa (O_DIRECT) sobre los discos internos ({duration_sec}s)...", "step")
         start_comp = time.time()
-        total_bytes_written = 0
-        total_bytes_read = 0
-        cycles = 0
+        disks = stress_workers.internal_disks()
 
-        data_block = bytearray(os.urandom(1024 * 1024))  # 1 MB random block
+        if not disks:
+            self.log("[SSD] No se encontró ningún disco interno: prueba omitida (no se escribe en RAM ni en el USB de arranque).", "warning")
+            self.results["ssd"] = {
+                "passed": None, "skipped": True, "drives": [],
+                "duration_sec": round(time.time() - start_comp, 1),
+                "message": "Sin disco interno que probar: omitida",
+            }
+            return
 
-        try:
-            while (time.time() - start_comp) < duration_sec:
-                if self.aborted or not self.check_thermal_safety():
-                    break
+        names = ", ".join(f"{d['device']} ({d['size_bytes'] / 1e9:.0f} GB)" for d in disks)
+        self.log(f"[SSD] Discos a probar en paralelo: {names}. Solo lectura: no se modifica ningún dato.", "info")
 
-                # Write phase
-                t0 = time.time()
-                with open(test_file_path, "wb") as f:
-                    for _ in range(file_size_mb):
-                        if self.aborted:
-                            break
-                        f.write(data_block)
-                    f.flush()
-                    os.fsync(f.fileno())
-                w_time = max(0.001, time.time() - t0)
-                w_speed = (file_size_mb / w_time)
-                total_bytes_written += (file_size_mb * 1024 * 1024)
+        reports = []
+        workers = []
+        for d in disks:
+            job = stress_workers.DiskReadStress(
+                d["device"], size_bytes=d["size_bytes"], duration_sec=duration_sec,
+                stop_check=lambda: self.aborted)
+            holder = {"job": job, "report": None, "error": None}
 
-                # Read & verification phase
-                t1 = time.time()
-                read_bytes = 0
-                with open(test_file_path, "rb") as f:
-                    while True:
-                        chunk = f.read(1024 * 1024)
-                        if not chunk or self.aborted:
-                            break
-                        read_bytes += len(chunk)
-                total_bytes_read += read_bytes
-                r_time = max(0.001, time.time() - t1)
-                r_speed = (file_size_mb / r_time)
-
-                cycles += 1
-                self.log(f"[SSD] Ciclo {cycles} ({file_size_mb} MB): Escritura {w_speed:.1f} MB/s | Lectura {r_speed:.1f} MB/s", "info")
-                self._update_overall_progress(start_comp, duration_sec, "ssd")
-                time.sleep(0.5)
-
-        except Exception as e:
-            self.log(f"[SSD] Excepción durante prueba I/O: {e}", "warning")
-        finally:
-            if os.path.exists(test_file_path):
+            def run(h=holder):
                 try:
-                    os.remove(test_file_path)
-                except Exception:
-                    pass
+                    h["report"] = h["job"].run()
+                except Exception as exc:  # device vanished, no permission...
+                    h["error"] = str(exc)
 
-        passed = not self.aborted and cycles > 0
-        avg_mb_written = round(total_bytes_written / (1024 * 1024), 1)
+            t = threading.Thread(target=run, daemon=True)
+            t.start()
+            workers.append((t, holder))
+
+        # Keep the thermal watchdog and progress alive while the readers work.
+        while any(t.is_alive() for t, _ in workers):
+            if self.aborted or not self.check_thermal_safety():
+                self.aborted = True
+                break
+            self._update_overall_progress(start_comp, duration_sec, "ssd")
+            time.sleep(1.0)
+        for t, _ in workers:
+            t.join(timeout=15)
+
+        all_ok = True
+        for (t, h), d in zip(workers, disks):
+            rep = h["report"]
+            if h["error"] or not rep:
+                all_ok = False
+                self.log(f"[SSD] {d['device']}: no se pudo leer ({h['error'] or 'sin resultados'}).", "error")
+                reports.append({"device": d["device"], "error": h["error"] or "sin resultados"})
+                continue
+            bad = rep["io_errors"] or rep["mismatches"]
+            all_ok = all_ok and not bad
+            drop = rep["throughput_drop_pct"]
+            self.log(
+                f"[SSD] {d['device']}: secuencial {rep['seq_mb_s']} MB/s | aleatorio 4K {rep['rand_iops']} IOPS | "
+                f"latencia máx {rep['max_latency_ms']} ms | errores E/S {rep['io_errors']} | relecturas distintas {rep['mismatches']}"
+                + (f" | caída de rendimiento {drop}%" if drop is not None else "")
+                + ("" if rep["direct_io"] else " (sin O_DIRECT: lecturas cacheadas)"),
+                "error" if bad else "info")
+            if bad:
+                self.log(f"[SSD] {d['device']}: {rep['first_error'] or 'contenido distinto en relecturas'}. Posible fallo del disco (o bloqueo TCG Opal si es el primer acceso).", "error")
+            elif drop is not None and drop >= 40:
+                self.log(f"[SSD] {d['device']}: el rendimiento cayó {drop}% durante la prueba (posible throttling térmico del SSD).", "warning")
+            reports.append(rep)
+
+        passed = not self.aborted and all_ok
+        total_mb = round(sum(r.get("seq_mb", 0) for r in reports), 1)
         self.results["ssd"] = {
             "passed": passed,
-            "cycles": cycles,
-            "total_mb_processed": avg_mb_written,
+            "drives": reports,
+            "total_mb_read": total_mb,
             "duration_sec": round(time.time() - start_comp, 1),
-            "message": f"SSD Estable: {cycles} ciclos sostenidos ({avg_mb_written} MB verificados)" if passed else "SSD abortado"
+            "message": (f"SSD estable: {len(reports)} disco(s), {total_mb} MB leídos sin errores ni relecturas inconsistentes"
+                        if passed else ("SSD abortado" if all_ok else "SSD con errores de lectura o datos inconsistentes")),
+        }
+        if passed:
+            self.log(f"[SSD] Prueba superada: {total_mb} MB leídos en {len(reports)} disco(s) sin errores.", "success")
+        else:
+            self.log("[SSD] Prueba de almacenamiento finalizada con incidencias o abortada.", "error" if not all_ok else "warning")
+
+    # ─────────────────────────────────────────────────────────────────
+    # 4. GPU STRESS (WEBGL 3D SHADER, RESULT REPORTED BY THE BROWSER)
+    # ─────────────────────────────────────────────────────────────────
+    # Minimum average FPS for the GPU phase to count as stable.
+    GPU_MIN_AVG_FPS = 5.0
+
+    def report_gpu(self, report):
+        """Receive the (cumulative) WebGL stats the browser measures during the GPU phase."""
+        if not isinstance(report, dict):
+            raise ValueError("Informe GPU inválido")
+
+        def num(key):
+            v = report.get(key)
+            return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and v == v else 0.0
+
+        self.gpu_report = {
+            "frames": int(num("frames")),
+            "avg_fps": round(num("avg_fps"), 1),
+            "min_fps": round(num("min_fps"), 1),
+            "context_lost": bool(report.get("context_lost")),
+            "error": str(report.get("error") or "")[:200],
+            "renderer": str(report.get("renderer") or "")[:120],
         }
 
-        if passed:
-            self.log(f"[SSD] Prueba superada: {cycles} ciclos ({avg_mb_written} MB procesados) sin sectores corruptos.", "success")
-        else:
-            self.log("[SSD] Prueba de almacenamiento finalizada o abortada.", "warning")
-
-    # ─────────────────────────────────────────────────────────────────
-    # 4. GPU STRESS (WEBGL 3D SHADER COORD)
-    # ─────────────────────────────────────────────────────────────────
     def _run_gpu_stress(self, duration_sec):
         self.log(f"[GPU] Activando carga 3D WebGL (Shader & Rasterización) ({duration_sec}s)...", "step")
         start_comp = time.time()
+        self.gpu_report = None
 
         while (time.time() - start_comp) < duration_sec:
             if self.aborted or not self.check_thermal_safety():
@@ -555,17 +604,39 @@ class HardwareStressRunner:
             self._update_overall_progress(start_comp, duration_sec, "gpu")
             time.sleep(1.0)
 
-        passed = not self.aborted
-        self.results["gpu"] = {
-            "passed": passed,
-            "duration_sec": round(time.time() - start_comp, 1),
-            "message": "Renderizado 3D WebGL estable sin pérdida de contexto" if passed else "GPU abortada"
-        }
+        # The browser pushes its cumulative stats every couple of seconds.
+        rep = self.gpu_report
+        duration = round(time.time() - start_comp, 1)
 
-        if passed:
-            self.log("[GPU] Prueba gráfica superada: Renderizado 3D estable sin cuelgues de driver.", "success")
-        else:
+        if self.aborted:
+            self.results["gpu"] = {"passed": False, "duration_sec": duration, "message": "GPU abortada"}
             self.log("[GPU] Prueba gráfica finalizada.", "warning")
+        elif rep is None:
+            self.results["gpu"] = {
+                "passed": None, "skipped": True, "duration_sec": duration,
+                "message": "GPU sin verificar: el navegador no informó el renderizado 3D",
+            }
+            self.log("[GPU] El navegador no reportó resultados de renderizado: prueba sin verificar.", "warning")
+        else:
+            problems = []
+            if rep["context_lost"]:
+                problems.append("pérdida de contexto WebGL")
+            if rep["error"]:
+                problems.append(rep["error"])
+            if rep["frames"] <= 0:
+                problems.append("no se dibujó ningún fotograma")
+            elif rep["avg_fps"] < self.GPU_MIN_AVG_FPS:
+                problems.append(f"rendimiento insuficiente ({rep['avg_fps']} FPS de media)")
+            passed = not problems
+            self.results["gpu"] = {
+                "passed": passed, "duration_sec": duration, "gpu": rep,
+                "message": (f"GPU 3D estable: {rep['avg_fps']} FPS de media (mín {rep['min_fps']}), sin pérdida de contexto"
+                            if passed else "GPU con problemas: " + "; ".join(problems)),
+            }
+            if passed:
+                self.log(f"[GPU] Prueba gráfica superada: {rep['avg_fps']} FPS de media (mín {rep['min_fps']}), {rep['frames']} fotogramas.", "success")
+            else:
+                self.log(f"[GPU] Problemas detectados: {'; '.join(problems)}.", "error")
 
     def _update_overall_progress(self, current_comp_start, comp_duration, current_comp):
         if not self.start_time or self.total_duration_sec <= 0:
@@ -600,6 +671,7 @@ class HardwareStressRunner:
             "max_temp_c": int(round(self.max_temp_c)) if self.max_temp_c else None,
             "logs": self.logs[-30:],  # Return recent 30 logs
             "results": self.results,
+            "failed_components": [c for c, r in self.results.items() if r.get("passed") is False],
             "thermal_assessment": self.thermal_assessment,
         }
 
@@ -609,9 +681,22 @@ def start_stress_test(components=None, level="quick"):
     with _runner_lock:
         if _stress_runner and _stress_runner.is_running:
             return {"success": False, "message": "Ya hay una prueba de estrés en ejecución."}
-        _stress_runner = HardwareStressRunner(components=components, level=level)
-        _stress_runner.start()
+        try:
+            runner = HardwareStressRunner(components=components, level=level)
+        except ValueError as exc:
+            return {"success": False, "message": str(exc)}
+        _stress_runner = runner
+        runner.start()
         return {"success": True, "message": "Prueba de estrés iniciada correctamente."}
+
+
+def report_gpu_result(report):
+    """Store the browser's WebGL stats for the running GPU phase."""
+    with _runner_lock:
+        if not _stress_runner or not _stress_runner.is_running:
+            return {"success": False, "message": "No hay ninguna prueba de estrés activa."}
+        _stress_runner.report_gpu(report)
+        return {"success": True}
 
 
 def stop_stress_test():
@@ -639,6 +724,7 @@ def get_stress_status():
                 "max_temp_c": None,
                 "logs": [],
                 "results": {},
+                "failed_components": [],
                 "thermal_assessment": None
             }
         return _stress_runner.get_status()

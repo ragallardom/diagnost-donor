@@ -46,6 +46,15 @@ class ServerGuardTests(unittest.TestCase):
             headers['Origin'] = origin
         return self.request('POST', path, body=body, headers=headers)
 
+    def test_gpu_report_requires_token_and_reaches_the_runner(self):
+        resp, _ = self.post('/api/stress/gpu-report', {'frames': 1})
+        self.assertEqual(resp.status, 403)
+        with mock.patch('server.report_gpu_result', return_value={'success': True}) as rep:
+            resp, data = self.post('/api/stress/gpu-report', {'frames': 10, 'avg_fps': 30},
+                                   token=server.SESSION_TOKEN, origin=f'http://127.0.0.1:{self.port}')
+        self.assertEqual(resp.status, 200)
+        rep.assert_called_once_with({'frames': 10, 'avg_fps': 30})
+
     def test_index_injects_session_token(self):
         resp, data = self.request('GET', '/')
         self.assertEqual(resp.status, 200)

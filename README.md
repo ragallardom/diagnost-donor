@@ -83,7 +83,7 @@ wget -O Aplicaciones/google-chrome-stable_current_amd64.deb https://dl.google.co
   * AMD: el kernel no expone contadores de throttling; la evaluación se hace por temperatura.
 * **Recomendación de mantenimiento (limpieza y cambio de pasta térmica):**
   * *Vista general:* recuadro "Salud térmica" con el estado de throttling y el TjMax. Recomienda mantenimiento si la CPU se mantiene en ≥95 °C durante 60 s, o si está sobre 70 °C en reposo durante 60 s (polvo o pasta seca). Si hubo throttling desde el arranque, sugiere confirmarlo con la prueba de estrés.
-  * *Prueba de estrés (fase CPU):* se descartan los primeros 30 s de Turbo/PL2, donde los picos altos son normales. Se recomienda limpieza y cambio de pasta si la CPU se mantiene en **≥95 °C durante al menos la mitad de la carga sostenida**, si hay throttling térmico significativo (≥3 s o ≥10 % del tiempo), si la prueba se aborta por temperatura o si el ventilador marca 0 RPM con la CPU sobre 80 °C. La prueba rápida da un resultado preliminar; para confirmar conviene usar el nivel Media o Profunda.
+  * *Prueba de estrés (fase CPU):* se descartan los primeros 30 s de Turbo/PL2, donde los picos altos son normales. Se recomienda limpieza y cambio de pasta si la CPU se mantiene en **≥95 °C durante al menos la mitad de la carga sostenida**, si hay throttling térmico significativo (≥3 s o ≥10 % del tiempo), si la prueba se aborta por temperatura o si el ventilador marca 0 RPM con la CPU sobre 80 °C. Para confirmar un diagnóstico dudoso conviene usar el nivel Media o Profunda.
 
 ### Almacenamiento, diagnóstico LBA, vida útil y desbloqueo SSD
 * **Evaluación de vida útil y desgaste (Endurance):**
@@ -115,8 +115,12 @@ wget -O Aplicaciones/google-chrome-stable_current_amd64.deb https://dl.google.co
 * **Bluetooth:** Detección del adaptador de radio y su dirección MAC.
 
 ### Prueba de estrés
-* Carga multihilo configurable para CPU, memoria RAM, lecturas/escrituras en SSD y renderizado 3D WebGL.
-* Duraciones: Rápida (~2.5 min), Media (~6 min) o Profunda (~15 min).
+* Carga configurable para CPU, memoria RAM, lectura de SSD y renderizado 3D WebGL. Cada fase **verifica sus resultados**; una fase que no puede verificarse se marca «SIN VERIFICAR» en lugar de aprobarse.
+  * **CPU:** todos los hilos lógicos con `stress-ng` (`--cpu-method all` + `--matrix` + `--vecmath`, con `--verify`); si no está disponible, un proceso Python por CPU que repite cálculos FP, enteros y SHA-256 y compara con su valor de referencia. Un resultado distinto o una carga que termina antes de tiempo cuentan como fallo.
+  * **RAM:** cada byte del buffer (hasta el 50 % / 65 % / 80 % de la memoria disponible según el nivel) se escribe y se relee con patrones sólidos (`00/FF/55/AA/0F/F0/33/CC`), *walking ones/zeros* y datos pseudoaleatorios distintos en bloques vecinos (detecta fallos de líneas de dirección). Se informa el número real de bytes con error y su posición.
+  * **SSD:** lecturas directas (`O_DIRECT`) **de solo lectura** sobre los discos internos (nunca el USB de arranque): barrido secuencial de 1 MiB + lecturas aleatorias de 4 KiB con 8 hilos + relectura de zonas fijas comparando su contenido. Informa MB/s, IOPS, latencia máxima y caída de rendimiento (posible throttling del SSD). No se escribe nada: el sistema corre desde RAM (`toram`), por lo que un archivo temporal probaría la memoria y no el disco.
+  * **GPU:** el navegador renderiza un shader de *raymarching* a 1280×720 con 4 pasadas por fotograma y reporta fotogramas, FPS medio/mínimo, pérdida de contexto WebGL y errores de shader; el veredicto sale de esas métricas.
+* Duraciones: Rápida (~3.5 min), Media (~9 min) o Profunda (~26 min). La fase de CPU de la prueba rápida dura 75 s: 30 s de Turbo (descartados) y 45 s de carga sostenida.
 * Protección térmica con tolerancia a picos normales de Turbo Boost (PL2) y parada automática de emergencia si la CPU sostiene >=100°C por más de 4 segundos o supera los 104°C.
 * Informe final con la evaluación del sistema de enfriamiento y la recomendación de limpieza / cambio de pasta térmica (ver *Temperaturas, ventilación y salud térmica*).
 
