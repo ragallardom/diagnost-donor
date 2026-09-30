@@ -64,18 +64,25 @@ def get_display_and_mobo():
 
         is_conn = False
 
-        # Strategy 1: sysfs status file
+        # Strategy 1: sysfs status file. When the kernel gives a definite answer
+        # ("connected" / "disconnected") it is final: the weaker heuristics below
+        # (modes, enabled) can be stale on a port with nothing plugged in.
         status_file = os.path.join(drm, 'status')
+        definite = False
         if os.path.exists(status_file):
             try:
                 with open(status_file, 'r', errors='ignore') as f:
-                    if f.read().strip().lower() == 'connected':
-                        is_conn = True
+                    status = f.read().strip().lower()
+                if status == 'connected':
+                    is_conn = True
+                    definite = True
+                elif status == 'disconnected':
+                    definite = True
             except Exception:
                 pass
 
         # Strategy 2: EDID binary probe (forces hardware DDC read)
-        if not is_conn:
+        if not is_conn and not definite:
             edid_file = os.path.join(drm, 'edid')
             if os.path.exists(edid_file):
                 try:
@@ -87,7 +94,7 @@ def get_display_and_mobo():
                     pass
 
         # Strategy 3: Modes file presence
-        if not is_conn:
+        if not is_conn and not definite:
             modes_file = os.path.join(drm, 'modes')
             if os.path.exists(modes_file):
                 try:
@@ -98,7 +105,7 @@ def get_display_and_mobo():
                     pass
 
         # Strategy 4: sysfs enabled file
-        if not is_conn:
+        if not is_conn and not definite:
             enabled_file = os.path.join(drm, 'enabled')
             if os.path.exists(enabled_file):
                 try:

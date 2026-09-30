@@ -55,28 +55,30 @@ wget -O Aplicaciones/google-chrome-stable_current_amd64.deb https://dl.google.co
 ## Módulos y pruebas incluidas
 
 ### Información del sistema
-* Lectura DMI: fabricante, modelo exacto y número de serie (S/N).
+* Lectura DMI: fabricante, modelo exacto y número de serie (S/N). Los valores de relleno del fabricante (`Default string`, `To be filled by O.E.M.`, `None`…) se descartan: si el S/N del sistema no es válido se usa el de la placa y, si tampoco, se muestra `N/A`.
+* TPM: solo se da por 2.0 si el kernel lo confirma (`tpm_version_major` o `/dev/tpmrm0`); un `/dev/tpm0` sin versión se muestra como «versión no confirmada».
 * Placa base, versión y fecha de BIOS.
-* Detección de pantallas externas conectadas por HDMI o DisplayPort (filtrando el panel interno eDP).
-* Benchmark rápido de CPU multihilo (~0.5s).
-* Prueba de integridad y velocidad de memoria RAM (lectura/escritura de patrones de bits en GB/s).
+* Detección de pantallas externas conectadas por HDMI o DisplayPort (filtrando el panel interno eDP). Si el kernel informa `connected` / `disconnected` esa respuesta es definitiva; solo se recurre a EDID, modos o `enabled` cuando el estado es desconocido.
+* Benchmark rápido de CPU (~0.5 s): un proceso por CPU lógica ejecuta el mismo cálculo de coma flotante y todos deben devolver el resultado idéntico bit a bit; un núcleo que difiere, no responde o devuelve NaN se cuenta como error.
+* Prueba de integridad y velocidad de memoria RAM (256 MB, ~1-3 s): 5 patrones (`AA`, `55`, `00`, `FF` y aleatorio) escritos y verificados byte a byte, con velocidad en GB/s. Cualquier byte distinto marca la prueba como fallida.
 
 ### Pantalla (Dead Pixel Test)
 * Modo interactivo a pantalla completa con 9 patrones y colores sólidos (rojo, verde, azul, blanco, negro para backlight bleed, amarillo, magenta, cian y gradiente de grises).
 * Navegación con clic, flechas o barra espaciadora; salida con `Esc`.
 
 ### Batería y alimentación
-* Salud real de la batería (`Full Capacity / Design Capacity`).
+* Salud real de la batería (`Full Capacity / Design Capacity`). Si la batería no informa ambas capacidades se muestra `N/D`, nunca un 100 % inventado.
 * Contador de ciclos de carga con cuadro de referencia industrial (0-300: Excelente, 300-500: Normal / Buen estado, 500-800: Desgaste moderado, >800: Desgaste alto).
 * Capacidad de diseño vs actual (Wh), porcentaje de carga y voltaje en tiempo real.
 * Detección precisa de anomalías de carga con eliminación de falsos positivos:
   * Reconocimiento de batería al 100% o carga completa sin emitir falsas alertas de carga detenida.
   * Soporte para umbrales de conservación en BIOS (ASUS, Lenovo, Dell a 60% u 80%).
   * Periodo de gracia para la negociación eléctrica de controladores EC/PMIC al enchufar el cargador.
+* `upower` se consulta como máximo cada 5 s (no en cada refresco de 1 s).
 
 ### Temperaturas, ventilación y salud térmica
 * Sensores térmicos dedicados de silicio (`coretemp` para Intel, `k10temp`/`zenpower` para AMD, prefiriendo `Tdie` sobre `Tctl`), filtrando sensores periféricos.
-* Lectura de RPM de ventiladores (soporte para Lenovo ThinkPad ACPI, ASUS y HP WMI). Si la BIOS no expone un valor, se indica "Sin lectura"; nunca se muestran valores inventados.
+* Lectura de RPM de ventiladores (soporte para Lenovo ThinkPad ACPI, ASUS y HP WMI). Si la BIOS no expone un valor, se indica "Sin lectura"; nunca se muestran valores inventados. El ventilador de ThinkPad no se lista dos veces (hwmon + `/proc/acpi/ibm/fan`).
 * **Detección de throttling térmico** (equivalente a *Core/Package Thermal Throttling* de HWiNFO64):
   * Intel: contadores del kernel `/sys/devices/system/cpu/cpuN/thermal_throttle/` (eventos y tiempo acumulado desde el arranque) y, si está disponible, los MSR de estado térmico para detectar throttling y PROCHOT en este momento (lectura permitida con Secure Boot).
   * El límite por potencia (PL1/PL2) no se considera un problema: es el comportamiento normal de una laptop y no se corrige con limpieza.
@@ -86,6 +88,7 @@ wget -O Aplicaciones/google-chrome-stable_current_amd64.deb https://dl.google.co
   * *Prueba de estrés (fase CPU):* se descartan los primeros 30 s de Turbo/PL2, donde los picos altos son normales. Se recomienda limpieza y cambio de pasta si la CPU se mantiene en **≥95 °C durante al menos la mitad de la carga sostenida**, si hay throttling térmico significativo (≥3 s o ≥10 % del tiempo), si la prueba se aborta por temperatura o si el ventilador marca 0 RPM con la CPU sobre 80 °C. Para confirmar un diagnóstico dudoso conviene usar el nivel Media o Profunda.
 
 ### Almacenamiento, diagnóstico LBA, vida útil y desbloqueo SSD
+* **Salud SMART real:** el estado del disco sale de los datos SMART (`smartctl` / `nvme-cli`): estado global, `critical_warning` NVMe, errores de integridad, reserva disponible bajo el umbral, desgaste ≥ 90 % y, en SATA, sectores reasignados / pendientes / incorregibles. Resultado: correcto, con advertencias o riesgo de fallo. Si el disco no expone SMART se indica «SMART no disponible»; nunca se muestra «Salud 100 %» sin datos.
 * **Evaluación de vida útil y desgaste (Endurance):**
   * Total Escrito acumulado (**TBW - Terabytes Written**) a partir de registros SMART (`data_units_written` en NVMe o `Total_LBAs_Written` en SATA).
   * Ciclos de programación y borrado (**Ciclos P/E**) con cuadro informativo de referencia industrial (0-100: Excelente, 100-300: Muy bueno, 300-600: Uso moderado, >800: Desgaste alto).
@@ -109,10 +112,10 @@ wget -O Aplicaciones/google-chrome-stable_current_amd64.deb https://dl.google.co
 * **Audio:** Barrido senoidal estéreo (canal izquierdo, derecho y ambos) con control de volumen del sistema.
 * **Micrófono con análisis de onda PCM/RMS:** Medidor de nivel (VU meter) en tiempo real y grabador loopback de 3 segundos con comprobación de amplitud para evitar falsos positivos en entornos sin micrófono o máquinas virtuales.
 * **Conectividad de red (Wi-Fi y Ethernet):**
-  * **Wi-Fi:** Escaneo de redes inalámbricas cercanas (SSID y nivel de señal). El equipo nunca se conecta a ninguna red: la prueba valida la antena y el adaptador mediante el escaneo, sin conexión ni ping.
-  * **Ethernet RJ-45:** Detección de puerto físico y validación del enlace por cable. Una vez probado con éxito, la aprobación en el checklist se mantiene fija de forma persistente aunque el técnico desconecte el cable para continuar con otras pruebas.
+  * **Wi-Fi:** Escaneo de redes inalámbricas cercanas (SSID y nivel de señal). El equipo nunca se conecta a ninguna red: la prueba valida la antena y el adaptador mediante el escaneo, sin conexión ni ping. Se muestran las 10 redes más fuertes (un AP por SSID) y se interpretan bien los SSID con `:`.
+  * **Ethernet RJ-45:** Detección de puerto físico (solo NIC reales; se ignoran interfaces virtuales como `dummy0`, `sit0` o `bond0`) y validación del enlace por cable. Una vez probado con éxito, la aprobación en el checklist se mantiene fija de forma persistente aunque el técnico desconecte el cable para continuar con otras pruebas.
   * **Diagnóstico automático de Loopback (TX/RX):** Comprobación inmediata de conectores loopback RJ-45 (pines 1-3 y 2-6 puenteados) mediante tramas de prueba capa 2 (EtherType `0x88B5`) sin necesidad de switch o infraestructura de red externa.
-* **Bluetooth:** Detección del adaptador de radio y su dirección MAC.
+* **Bluetooth:** Detección del adaptador de radio y su dirección MAC, con su estado real: operativo, apagado, bloqueado por software o bloqueado por hardware (`rfkill`). Un radio bloqueado no aprueba el checklist.
 
 ### Prueba de estrés
 * Carga configurable para CPU, memoria RAM, lectura de SSD y renderizado 3D WebGL. Cada fase **verifica sus resultados**; una fase que no puede verificarse se marca «SIN VERIFICAR» en lugar de aprobarse.
@@ -174,7 +177,7 @@ diagnost-donor/
 │   ├── start_qa.sh               # Script de inicio en el entorno Live con healthcheck
 │   └── VERSION                   # Archivo de control de versión
 ├── ISOs/                         # Directorio donde se guardan las ISOs compiladas
-├── tests/                        # Tests unitarios (unittest, sin dependencias)
+├── tests/                        # Tests unitarios (unittest, sin dependencias): estrés, diagnósticos, servidor, térmica, rendimiento
 └── README.md
 ```
 

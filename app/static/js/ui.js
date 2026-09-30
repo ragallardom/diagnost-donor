@@ -277,11 +277,13 @@ function updateBatteryTab(batteries) {
     batStatus.style.color = statusColor || "";
   }
 
-  if (batHealth) batHealth.innerText = `${bat.health_percent}%`;
-  if (batDesign) batDesign.innerText = `${bat.design_wh} Wh`;
-  if (batFull) batFull.innerText = `${bat.full_wh} Wh`;
+  const hasBattery = bat.present !== false;
+  const fmt = (v, unit) => (hasBattery && v) ? `${v} ${unit}` : "N/D";
+  if (batHealth) batHealth.innerText = (bat.health_percent === null || bat.health_percent === undefined) ? "N/D" : `${bat.health_percent}%`;
+  if (batDesign) batDesign.innerText = fmt(bat.design_wh, "Wh");
+  if (batFull) batFull.innerText = fmt(bat.full_wh, "Wh");
   if (batCycles) batCycles.innerText = bat.cycle_count || "N/A";
-  if (batVoltage) batVoltage.innerText = `${bat.voltage_v} V`;
+  if (batVoltage) batVoltage.innerText = fmt(bat.voltage_v, "V");
 
   const alertBanner = document.getElementById("charge-alert-banner");
   if (alertBanner) {
@@ -406,7 +408,9 @@ function updateStorageTab(storage) {
       _lastInternalStorageJson = currentInternalJson;
       if (internalList.length > 0) {
         internalContainer.innerHTML = internalList.map(s => {
-          const smartText = (s.smart_status || '').includes('100%') ? 'Salud 100% (Sin errores)' : (s.smart_status || 'Correcto');
+          // Verdict comes from real SMART data; without it the drive is never shown as healthy.
+          const smartText = escapeHtml(s.smart_status || 'SMART no disponible');
+          const smartColor = { ok: 'var(--success-green)', warning: '#f59e0b', failed: '#f87171' }[s.smart_health] || '#94a3b8';
           const hasReadTests = Boolean(s.device_read_test && s.nvme_read_test);
           const devReadPassed = s.device_read_test === 'PASSED';
           const nvmeReadPassed = s.nvme_read_test === 'PASSED';
@@ -502,8 +506,8 @@ function updateStorageTab(storage) {
             </div>
             <div class="card-spec-item">
               <span class="spec-label">Salud del disco (SMART)</span>
-              <div class="spec-value spec-value-detail" style="color: ${isOpal ? '#f59e0b' : 'var(--success-green)'}; font-weight: 700;">
-                ${isOpal ? 'SMART PASSED' : smartText}
+              <div class="spec-value spec-value-detail" style="color: ${smartColor}; font-weight: 700;">
+                ${smartText}
               </div>
             </div>
             ${enduranceHtml}
@@ -568,10 +572,18 @@ function updateBluetoothTab(bt) {
   const textEl = document.getElementById("bt-status-text");
   const detailEl = document.getElementById("bt-name-detail");
 
-  if (bt.present) {
+  if (bt.present && (bt.hard_blocked || bt.soft_blocked)) {
+    // Adapter found but its radio is blocked: not a pass.
     if (textEl) {
-      textEl.innerText = "Operativo y alimentado";
-      textEl.style.color = "var(--success-green)";
+      textEl.innerText = bt.status || "Bloqueado";
+      textEl.style.color = "var(--warning-amber)";
+    }
+    if (detailEl) detailEl.innerText = bt.name || "HCI0";
+    unmarkCheckpassed("chk-bt", "Bluetooth");
+  } else if (bt.present) {
+    if (textEl) {
+      textEl.innerText = bt.status || "Operativo y alimentado";
+      textEl.style.color = bt.is_powered ? "var(--success-green)" : "var(--warning-amber)";
     }
     if (detailEl) detailEl.innerText = bt.name || "HCI0";
     markCheckpassed("chk-bt", "BLUETOOTH");

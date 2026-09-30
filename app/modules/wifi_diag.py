@@ -142,6 +142,11 @@ def get_ethernet_status():
             if os.path.exists(f"{dev_path}/wireless") or os.path.exists(f"{dev_path}/phy80211"):
                 continue
 
+            # Only real NICs (the kernel links them to a bus device). Virtual interfaces such as
+            # dummy0, sit0, bond0 or ip6tnl0 exist on any system and are not an RJ-45 port.
+            if not os.path.exists(f"{dev_path}/device"):
+                continue
+
             # Bring interface UP so carrier sensing is active (only when it is down)
             if not _is_admin_up(dev_path):
                 try:
@@ -149,7 +154,7 @@ def get_ethernet_status():
                 except Exception:
                     pass
 
-            is_physical = os.path.exists(f"{dev_path}/device")
+            is_physical = True
             carrier_file = f"{dev_path}/carrier"
             speed_file = f"{dev_path}/speed"
             oper_file = f"{dev_path}/operstate"
@@ -234,6 +239,54 @@ def get_ethernet_status():
     }
 
 
+def _split_nmcli_terse(line):
+    """Split a `nmcli -t` line on unescaped ':' and undo the '\\:' / '\\\\' escapes."""
+    fields, cur, i = [], [], 0
+    while i < len(line):
+        ch = line[i]
+        if ch == '\\' and i + 1 < len(line):
+            cur.append(line[i + 1])
+            i += 2
+            continue
+        if ch == ':':
+            fields.append(''.join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+        i += 1
+    fields.append(''.join(cur))
+    return fields
+
+
+def parse_wifi_list(output):
+    """Parse `nmcli -t -f ACTIVE,SSID,SIGNAL,DEVICE dev wifi list`.
+
+    Handles SSIDs containing ':' (escaped by nmcli), keeps the strongest access
+    point per SSID and returns the list strongest first, so the ten shown are the
+    ten best and not the first ten nmcli happened to print.
+    """
+    best = {}
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        parts = _split_nmcli_terse(line)
+        if len(parts) < 3:
+            continue
+        ssid = parts[1]
+        if not ssid:
+            continue  # hidden network
+        try:
+            signal = int(parts[2])
+        except ValueError:
+            signal = 0
+        active = parts[0].lower() == 'yes'
+        prev = best.get(ssid)
+        if prev is None or signal > prev['signal'] or active:
+            best[ssid] = {'ssid': ssid, 'signal': signal,
+                          'connected': active or bool(prev and prev['connected'])}
+    return sorted(best.values(), key=lambda n: (not n['connected'], -n['signal']))
+
+
 def get_wifi_status():
     has_nmcli = shutil.which('nmcli') is not None
     wifi_enabled = False
@@ -290,30 +343,11 @@ def get_wifi_status():
             )
 
             if res_conn.returncode == 0:
-                lines = res_conn.stdout.strip().split('\n')
-                seen_ssids = set()
-                for line in lines:
-                    if not line:
-                        continue
-                    parts = line.split(':')
-                    if len(parts) >= 3:
-                        is_active = parts[0].lower() == 'yes'
-                        ssid = parts[1]
-                        try:
-                            signal = int(parts[2])
-                        except ValueError:
-                            signal = 0
-
-                        if ssid and ssid not in seen_ssids:
-                            seen_ssids.add(ssid)
-                            networks.append({
-                                'ssid': ssid,
-                                'signal': signal,
-                                'connected': is_active
-                            })
-                            if is_active:
-                                connected_ssid = ssid
-                                signal_quality = signal
+                networks = parse_wifi_list(res_conn.stdout)
+                for net in networks:
+                    if net['connected']:
+                        connected_ssid = net['ssid']
+                        signal_quality = net['signal']
         except Exception:
             pass
 

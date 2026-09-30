@@ -151,7 +151,8 @@ def get_thermal_and_fans():
                 for line in f:
                     if 'speed:' in line:
                         rpm = int(line.split(':')[1].strip())
-                        if not any('ThinkPad' in fn['label'] for fn in fans):
+                        # hwmon already exposes it as "thinkpad Fan": don't list it twice.
+                        if not any('thinkpad' in fn['label'].lower() for fn in fans):
                             fans.append({
                                 'label': 'Lenovo ThinkPad Fan',
                                 'rpm': rpm,

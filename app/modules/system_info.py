@@ -20,15 +20,39 @@ def read_dmi_field(filename):
             pass
     return None
 
+# Values firmware vendors leave in DMI when nobody filled the field in.
+_DMI_PLACEHOLDERS = {
+    '', 'none', 'n/a', 'default string', 'system serial number', 'system product name',
+    'to be filled by o.e.m.', 'to be filled by oem', 'not specified', 'not applicable',
+    'chassis serial number', 'base board serial number', '0', '123456789', '0123456789',
+    'unknown', 'o.e.m.', 'oem',
+}
+
+
+def clean_dmi_value(value):
+    """None for empty / placeholder DMI strings, otherwise the stripped value."""
+    if value is None:
+        return None
+    value = value.strip()
+    return None if value.lower() in _DMI_PLACEHOLDERS else value
+
+
 def check_tpm_status():
     tpm_paths = sorted(glob.glob('/sys/class/tpm/tpm*'))
     if not tpm_paths:
-        if os.path.exists('/dev/tpm0') or os.path.exists('/dev/tpmrm0'):
+        if os.path.exists('/dev/tpmrm0'):
             return {
                 'present': True,
-                'version': 'TPM 2.0 (Activo por Kernel /dev/tpm0)',
+                'version': 'TPM 2.0 (Activo por Kernel /dev/tpmrm0)',
                 'is_tpm2': True,
                 'status': 'OK'
+            }
+        if os.path.exists('/dev/tpm0'):
+            return {
+                'present': True,
+                'version': 'TPM presente (versión no confirmada)',
+                'is_tpm2': False,
+                'status': 'Warning'
             }
         return {
             'present': False,
@@ -60,12 +84,21 @@ def check_tpm_status():
             except Exception:
                 pass
 
-    if os.path.exists('/dev/tpm0'):
+    # /dev/tpmrm0 (kernel resource manager) only exists for TPM 2.0. A bare /dev/tpm0
+    # with no version file is not enough to claim 2.0.
+    if os.path.exists('/dev/tpmrm0'):
         return {
             'present': True,
             'version': 'TPM 2.0 (Detectado)',
             'is_tpm2': True,
             'status': 'OK'
+        }
+    if os.path.exists('/dev/tpm0'):
+        return {
+            'present': True,
+            'version': 'TPM presente (versión no confirmada)',
+            'is_tpm2': False,
+            'status': 'Warning'
         }
 
     return {
@@ -128,7 +161,11 @@ def get_system_summary():
     vendor = (read_dmi_field('sys_vendor') or read_dmi_field('board_vendor') or 'Generico').strip()
     model = (read_dmi_field('product_name') or read_dmi_field('product_family') or read_dmi_field('board_name') or 'Laptop / PC').strip()
     version = (read_dmi_field('product_version') or '').strip()
-    serial = read_dmi_field('product_serial') or 'N/A'
+    # A placeholder serial ("Default string", "To be filled by O.E.M."...) would be recorded as if it
+    # were real: fall back to the board serial, then to N/A.
+    serial = (clean_dmi_value(read_dmi_field('product_serial'))
+              or clean_dmi_value(read_dmi_field('board_serial'))
+              or 'N/A')
     
     # Prevent duplicating vendor if model already starts with vendor name (e.g. "HP" and "HP EliteBook...")
     v_first = vendor.split()[0] if vendor else ""
