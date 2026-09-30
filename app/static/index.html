@@ -17,7 +17,7 @@
       <div class="status-dot online"></div>
       <h1>DIAGNOST-DONOR</h1>
       <span
-        style="font-size: 0.75rem; color: #ffffff; font-weight: 500; font-family: var(--font-mono); margin-left: 2px;">v1.1.20</span>
+        style="font-size: 0.75rem; color: #ffffff; font-weight: 500; font-family: var(--font-mono); margin-left: 2px;">v1.1.23</span>
       <span class="badge-purple" id="header-serial">S/N: Detectando...</span>
     </div>
     <div class="system-quick-stats">
@@ -28,7 +28,8 @@
           id="quick-charge-status">--</span>)</div>
       <button class="btn btn-stress" onclick="openStressModal()" title="Prueba de estrés y estabilidad">Prueba de
         estrés</button>
-      <button class="btn btn-secondary" onclick="openReportModal()" title="Informe del equipo: enviar por Bluetooth">Informe</button>
+      <button class="btn btn-secondary" onclick="openReportModal()"
+        title="Informe del equipo: enviar por Bluetooth">Informe</button>
       <button class="btn btn-icon-refresh" onclick="refreshAllData()" title="Actualizar datos">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
           stroke-linecap="round" stroke-linejoin="round">
@@ -100,14 +101,18 @@
             </div>
             <div class="volume-slider-container" id="brightness-row"
               style="display: none; margin-top: 0.6rem; padding: 0.4rem 0.6rem; background: rgba(0, 0, 0, 0.25); border-radius: 8px; align-items: center; gap: 0.6rem; border: 1px solid var(--border-color);">
-              <label for="brightness-range" style="font-size: 0.8rem; font-weight: 700; color: var(--text-main);">Brillo</label>
+              <label for="brightness-range"
+                style="font-size: 0.8rem; font-weight: 700; color: var(--text-main);">Brillo</label>
               <input type="range" id="brightness-range" min="5" max="100" value="90"
                 style="flex: 1; accent-color: #a855f7; cursor: pointer;">
-              <span id="brightness-val" style="font-family: var(--font-mono); font-weight: 800; min-width: 3ch; text-align: right;">90%</span>
+              <span id="brightness-val"
+                style="font-family: var(--font-mono); font-weight: 800; min-width: 3ch; text-align: right;">90%</span>
             </div>
             <div class="test-status-rows">
-              <div class="test-status-row"><span class="status-key">Pantalla</span><span id="screen-test-status" style="color: var(--text-muted);">Pendiente</span></div>
-              <div class="test-status-row"><span class="status-key">CPU</span><span id="cpu-test-status" style="color: var(--violet-accent);">Analizando CPU...</span></div>
+              <div class="test-status-row"><span class="status-key">Pantalla</span><span id="screen-test-status"
+                  style="color: var(--text-muted);">Pendiente</span></div>
+              <div class="test-status-row"><span class="status-key">CPU</span><span id="cpu-test-status"
+                  style="color: var(--violet-accent);">Analizando CPU...</span></div>
             </div>
           </div>
         </div>
@@ -160,9 +165,11 @@
                 <span class="info-tip-wrap">
                   <span class="info-tip-icon">i</span>
                   <span class="info-tip-box">
-                    <strong style="color: #f1f5f9; display: block; margin-bottom: 0.25rem;">Ciclos de carga (Batería):</strong>
+                    <strong style="color: #f1f5f9; display: block; margin-bottom: 0.25rem;">Ciclos de carga
+                      (Batería):</strong>
                     <span style="display: block; color: #94a3b8; margin-bottom: 0.35rem; font-size: 0.72rem;">
-                      Un ciclo representa una descarga y recarga completa (100% acumulado). Mide el desgaste y envejecimiento real de las celdas químicas.
+                      Un ciclo representa una descarga y recarga completa (100% acumulado). Mide el desgaste y
+                      envejecimiento real de las celdas químicas.
                     </span>
                     <strong style="color: #e2e8f0; display: block; margin-bottom: 0.2rem;">Estado según ciclos:</strong>
                     • 0 a 300: Excelente (sin degradación apreciable)<br>
@@ -211,7 +218,8 @@
             </div>
           </div>
           <div style="margin-top: 0.75rem;">
-            <button class="btn btn-secondary btn-sm" onclick="openOpalModal()">Desbloquear disco (TCG Opal / PSID)</button>
+            <button class="btn btn-secondary btn-sm" onclick="openOpalModal()">Desbloquear disco (TCG Opal /
+              PSID)</button>
           </div>
         </div>
 
@@ -394,7 +402,8 @@
           <div id="ethernet-details" style="display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.5rem;">
             <div class="card-spec-item">
               <span class="spec-label">Estado del puerto</span>
-              <div class="spec-value spec-value-detail" id="eth-status-text" style="color: var(--text-muted);">Comprobando...</div>
+              <div class="spec-value spec-value-detail" id="eth-status-text" style="color: var(--text-muted);">
+                Comprobando...</div>
             </div>
             <div class="card-spec-item">
               <span class="spec-label">Interfaz de red</span>
@@ -578,7 +587,8 @@
           </div>
           <div class="card-spec-item">
             <span class="spec-label">Acción a realizar</span>
-            <div class="spec-value spec-value-detail" style="color: #e2e8f0;" id="opal-confirm-action-text">Reversión PSID + Creación tabla GPT limpia
+            <div class="spec-value spec-value-detail" style="color: #e2e8f0;" id="opal-confirm-action-text">Reversión
+              PSID + Creación tabla GPT limpia
             </div>
           </div>
         </div>
@@ -622,12 +632,14 @@
         <textarea id="report-comments" rows="3" maxlength="500" placeholder="Comentarios (opcional)"
           style="width: 100%; background: var(--bg-dark); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 6px; padding: 0.5rem; font: inherit; resize: vertical;"></textarea>
         <div style="display: flex; gap: 0.6rem;">
-          <button class="btn btn-block" id="btn-report-send" onclick="findPhonesForReport()">Enviar por Bluetooth</button>
+          <button class="btn btn-block" id="btn-report-send" onclick="findPhonesForReport()">Enviar por
+            Bluetooth</button>
           <button class="btn btn-secondary" onclick="toggleReportPreview()">Ver</button>
         </div>
         <div id="report-status" style="font-size: 0.85rem; min-height: 1.2rem;"></div>
         <div id="report-devices" style="display: flex; flex-wrap: wrap; gap: 0.5rem;"></div>
-        <iframe id="report-preview" sandbox="" style="display: none; width: 100%; height: 320px; border: 1px solid var(--border-color); border-radius: 6px; background: #fff;"></iframe>
+        <iframe id="report-preview" sandbox=""
+          style="display: none; width: 100%; height: 320px; border: 1px solid var(--border-color); border-radius: 6px; background: #fff;"></iframe>
       </div>
     </div>
   </div>
