@@ -14,6 +14,7 @@ import battery  # noqa: E402
 import bluetooth_diag  # noqa: E402
 import cpu_benchmark  # noqa: E402
 import display_hdmi_diag  # noqa: E402
+import opal_diag  # noqa: E402
 import ram_benchmark  # noqa: E402
 import storage_diag  # noqa: E402
 import system_info  # noqa: E402
@@ -311,6 +312,45 @@ class RamBenchmarkTests(unittest.TestCase):
         res = ram_benchmark.run_ram_benchmark(chunk_mb=8, corrupt=flip)
         self.assertFalse(res['success'])
         self.assertGreaterEqual(res['errors'], 1)
+
+
+class OpalSafetyTests(unittest.TestCase):
+    def _erase(self, nvme_ok, read_ok=True):
+        calls = []
+
+        def run(cmd, **kw):
+            calls.append(cmd[0])
+            if cmd[0] == 'nvme':
+                return mock.Mock(returncode=0 if nvme_ok else 1, stdout='Success' if nvme_ok else '', stderr='')
+            if cmd[0] == 'dd':
+                return mock.Mock(returncode=0 if read_ok else 1, stdout='', stderr='')
+            return mock.Mock(returncode=0, stdout='', stderr='')
+
+        with mock.patch('opal_diag.os.path.exists', return_value=False), \
+             mock.patch('opal_diag.os.path.exists', side_effect=lambda p: p == '/dev/nvme0n1'), \
+             mock.patch('opal_diag.subprocess.run', side_effect=run), \
+             mock.patch('opal_diag.time.sleep'):
+            return opal_diag.execute_nvme_crypto_erase('/dev/nvme0n1'), calls
+
+    def test_rejected_erase_does_not_wipe_partition_table(self):
+        res, calls = self._erase(nvme_ok=False, read_ok=True)
+        self.assertFalse(res['success'])           # a readable drive is not an erased drive
+        self.assertNotIn('wipefs', calls)
+        self.assertNotIn('parted', calls)
+        self.assertIn('intactos', res['log'])
+
+    def test_accepted_erase_wipes_and_succeeds(self):
+        res, calls = self._erase(nvme_ok=True)
+        self.assertTrue(res['success'])
+        self.assertIn('wipefs', calls)
+        self.assertIn('parted', calls)
+
+    def test_opal_lock_detected_from_real_sedutil_output(self):
+        locked = 'locking function (0x0002)\n    locked = y, lockingenabled = y, lockingsupported = y'
+        unlocked = 'locking function (0x0002)\n    locked = n, lockingenabled = n, lockingsupported = y'
+        for out, expected in ((locked, True), (unlocked, False), ('', False)):
+            with mock.patch('opal_diag.sedutil_query', return_value=out):
+                self.assertEqual(opal_diag.check_opal_locked('/dev/nvme0n1'), expected)
 
 
 if __name__ == '__main__':

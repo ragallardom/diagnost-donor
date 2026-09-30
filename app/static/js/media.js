@@ -50,6 +50,8 @@ async function startCamera() {
       cameraStream = await navigator.mediaDevices.getUserMedia(constraints2);
     }
 
+    // Pass only once the sensor is really delivering frames (non-zero video size), not
+    // merely because a camera device exists and the stream was granted.
     const setCamPassed = () => {
       if (video.videoWidth && video.videoHeight) {
         resInfo.innerText = `Res: ${video.videoWidth}x${video.videoHeight}`;
@@ -57,8 +59,8 @@ async function startCamera() {
         if (container) {
           container.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
         }
+        markCheckpassed("chk-camera", "CÁMARA");
       }
-      markCheckpassed("chk-camera", "CÁMARA");
     };
 
     video.onloadedmetadata = setCamPassed;
@@ -680,7 +682,9 @@ function closeScreenTestModal(event) {
   if (document.fullscreenElement && document.exitFullscreen) {
     document.exitFullscreen().catch(() => {});
   }
-  if (currentScreenColorIndex >= 3 && !screenTestCompleted) {
+  // Leaving with Esc only passes if the last pattern was reached: dead pixels can hide
+  // on any of the 9 colors, so seeing the first few is not a full check.
+  if (currentScreenColorIndex >= SCREEN_TEST_COLORS.length - 1 && !screenTestCompleted) {
     finishScreenTest();
   }
 }

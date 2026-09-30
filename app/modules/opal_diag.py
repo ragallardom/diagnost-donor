@@ -324,27 +324,33 @@ def execute_nvme_crypto_erase(device):
         except Exception as exc:
             log_entries.append(f"[AVISO] Format SES=1 fallo: {exc}")
 
-    # Step 4: Storage Controller Rescan & Partition Wipe
-    log_entries.append(f"[3/5] Refrescando bus de almacenamiento y generando tabla GPT limpia...")
-    sys_name = os.path.basename(device)
-    rescan_path = f"/sys/block/{sys_name}/device/rescan"
-    if os.path.exists(rescan_path):
+    # Step 4: Storage Controller Rescan & Partition Wipe.
+    # Only after an erase actually succeeded: if every erase command was rejected the
+    # drive still holds its data, and wiping its signatures / partition table anyway
+    # would damage it while reporting a failure.
+    if erase_success:
+        log_entries.append("[3/5] Refrescando bus de almacenamiento y generando tabla GPT limpia...")
+        sys_name = os.path.basename(device)
+        rescan_path = f"/sys/block/{sys_name}/device/rescan"
+        if os.path.exists(rescan_path):
+            try:
+                with open(rescan_path, 'w') as f:
+                    f.write("1\n")
+            except Exception:
+                pass
+
+        time.sleep(1)
+
         try:
-            with open(rescan_path, 'w') as f:
-                f.write("1\n")
-        except Exception:
-            pass
-
-    time.sleep(1)
-
-    try:
-        subprocess.run(['partprobe', device], capture_output=True, timeout=5)
-        subprocess.run(['udevadm', 'settle', '--timeout=3'], capture_output=True, timeout=5)
-        subprocess.run(['wipefs', '-af', device], capture_output=True, text=True, timeout=10)
-        subprocess.run(['parted', '-s', device, 'mklabel', 'gpt'], capture_output=True, text=True, timeout=10)
-        subprocess.run(['partprobe', device], capture_output=True, timeout=5)
-    except Exception as exc:
-        log_entries.append(f"[AVISO] wipefs/parted fallo: {exc}")
+            subprocess.run(['partprobe', device], capture_output=True, timeout=5)
+            subprocess.run(['udevadm', 'settle', '--timeout=3'], capture_output=True, timeout=5)
+            subprocess.run(['wipefs', '-af', device], capture_output=True, text=True, timeout=10)
+            subprocess.run(['parted', '-s', device, 'mklabel', 'gpt'], capture_output=True, text=True, timeout=10)
+            subprocess.run(['partprobe', device], capture_output=True, timeout=5)
+        except Exception as exc:
+            log_entries.append(f"[AVISO] wipefs/parted fallo: {exc}")
+    else:
+        log_entries.append("[3/5] Ningún comando de borrado fue aceptado: no se toca la tabla de particiones ni las firmas.")
 
     # Step 5: Non-destructive verification read test
     log_entries.append(f"[4/5] Verificando desbloqueo mediante lectura directa de sectores LBA...")
@@ -359,7 +365,8 @@ def execute_nvme_crypto_erase(device):
     except Exception as e:
         log_entries.append(f"Aviso lectura LBA: {e}")
 
-    if read_ok or erase_success:
+    # Success means an erase really ran. A readable drive alone proves nothing was erased.
+    if erase_success:
         log_entries.append("[5/5] Operacion completada exitosamente. Disco desbloqueado y listo para instalar el SO.")
         return {
             'success': True,
@@ -375,9 +382,11 @@ def execute_nvme_crypto_erase(device):
         }
     else:
         log_entries.append("[ERROR] El controlador rechazo los comandos de borrado criptografico directo.")
+        if read_ok:
+            log_entries.append("El disco es legible, pero no se borró nada: los datos siguen intactos.")
         return {
             'success': False,
-            'message': f'El controlador rechazo el borrado directo. El firmware del disco {device} requiere desbloqueo mediante PSID Revert.',
+            'message': f'El controlador rechazo el borrado directo. El firmware del disco {device} requiere desbloqueo mediante PSID Revert. No se modificó ningún dato.',
             'log': "\n".join(log_entries)
         }
 
@@ -449,11 +458,9 @@ def _get_device_info(dev_path):
 def check_opal_locked(device):
     try:
         stdout = sedutil_query(device)
-        if stdout:
-            if 'locked = yes' in stdout or 'mbr enabled = yes' in stdout or 'locking feature = yes' in stdout:
-                return True
-            if 'tper function = yes' in stdout or 'locking function = yes' in stdout:
-                return True
+        # Real `sedutil-cli --query` output: "Locked = Y, LockingEnabled = Y, ..." (Y/N, not yes/no).
+        if stdout and re.search(r'\blocked\s*=\s*y\b', stdout):
+            return True
     except Exception:
         pass
     return False

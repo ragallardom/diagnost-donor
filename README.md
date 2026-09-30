@@ -64,7 +64,7 @@ wget -O Aplicaciones/google-chrome-stable_current_amd64.deb https://dl.google.co
 
 ### Pantalla (Dead Pixel Test)
 * Modo interactivo a pantalla completa con 9 patrones y colores sólidos (rojo, verde, azul, blanco, negro para backlight bleed, amarillo, magenta, cian y gradiente de grises).
-* Navegación con clic, flechas o barra espaciadora; salida con `Esc`.
+* Navegación con clic, flechas o barra espaciadora; salida con `Esc`. Salir con `Esc` solo aprueba la prueba si se llegó al último de los 9 patrones (un píxel muerto puede estar en cualquier color).
 
 ### Batería y alimentación
 * Salud real de la batería (`Full Capacity / Design Capacity`). Si la batería no informa ambas capacidades se muestra `N/D`, nunca un 100 % inventado.
@@ -101,14 +101,14 @@ wget -O Aplicaciones/google-chrome-stable_current_amd64.deb https://dl.google.co
   * Escáner QR optimizado para pantallas de teléfonos móviles y cámaras web de baja resolución.
   * **Receptor Bluetooth Android nativo (OBEX):** Permite emparejar el celular y compartir el código PSID directamente por Bluetooth sin instalar aplicaciones ni usar redes locales.
   * Reversión de discos bloqueados con `sedutil-cli` y reseteo integral de particiones (`wipefs` + `parted`).
-  * Compatibilidad con borrado criptográfico NVMe Sanitize / SES-2.
+  * Compatibilidad con borrado criptográfico NVMe Sanitize / SES-2. Si el controlador rechaza todos los comandos de borrado, **no se toca** la tabla de particiones ni las firmas y el disco se informa como no borrado (un disco legible no cuenta como borrado). El estado «bloqueado por Opal» se lee del `Locked = Y` real de `sedutil-cli --query`.
 
 ### Teclado y Touchpad
-* **Teclado:** Matriz visual interactiva de 78 teclas (distribuciones ANSI e ISO). Cada pulsación cambia de color progresivamente (verde, violeta, naranja, azul, amarillo) y contabiliza teclas presionadas sin que el navegador capture los atajos del sistema (`Tab`, `Alt`, `F1-F12`, `Super`).
-* **Touchpad:** Lienzo para verificar continuidad del cursor y zonas muertas, además de contadores para clic izquierdo y clic derecho / gesto de 2 dedos.
+* **Teclado:** Matriz visual interactiva de 78 teclas (distribuciones ANSI e ISO). Cada pulsación cambia de color progresivamente (verde, violeta, naranja, azul, amarillo) y contabiliza teclas presionadas sin que el navegador capture los atajos del sistema (`Tab`, `Alt`, `F1-F12`, `Super`). Mantener una tecla pulsada cuenta como una sola pulsación. Hacer clic en la matriz solo valida `Fn`, `Win` y `Super` (teclas que el navegador no recibe); el resto debe pulsarse físicamente, de modo que el test no se puede aprobar solo con el mouse.
+* **Touchpad:** Lienzo para verificar continuidad del cursor y zonas muertas, además de contadores para clic izquierdo y clic derecho / gesto de 2 dedos. El trazo solo cuenta tras recorrer al menos 150 px (un simple clic en el lienzo no basta).
 
 ### Multimedia y conectividad
-* **Cámara web:** Vista previa en vivo y detección de resolución máxima soportada.
+* **Cámara web:** Vista previa en vivo y detección de resolución máxima soportada. Se aprueba solo cuando el sensor entrega fotogramas (tamaño de video distinto de cero), no por el mero hecho de existir el dispositivo.
 * **Audio:** Barrido senoidal estéreo (canal izquierdo, derecho y ambos) con control de volumen del sistema.
 * **Micrófono con análisis de onda PCM/RMS:** Medidor de nivel (VU meter) en tiempo real y grabador loopback de 3 segundos con comprobación de amplitud para evitar falsos positivos en entornos sin micrófono o máquinas virtuales.
 * **Conectividad de red (Wi-Fi y Ethernet):**
