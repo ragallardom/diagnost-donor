@@ -131,6 +131,9 @@ wget -O Aplicaciones/google-chrome-stable_current_amd64.deb https://dl.google.co
 * Protección térmica con tolerancia a picos normales de Turbo Boost (PL2) y parada automática de emergencia si la CPU sostiene >=100°C por más de 4 segundos o supera los 104°C.
 * Informe final con la evaluación del sistema de enfriamiento y la recomendación de limpieza / cambio de pasta térmica (ver *Temperaturas, ventilación y salud térmica*).
 
+### Adaptación a la pantalla
+* La interfaz se escala sola según la resolución (diseñada para ~1600×900): en pantallas pequeñas se reduce (1366×768 → 85 %, 1280×720 → 80 %, mínimo 72 %), hasta Full HD se ve al 100 % y en 2K/4K se amplía (máx. 150 %). Las capas a pantalla completa (prueba de pantalla, ventanas) siguen ocupando toda la pantalla.
+
 ### Seguridad y blindaje corporativo (Modo Kiosk)
 El objetivo es que el equipo solo pueda usarse para el diagnóstico: sin red, sin navegar fuera de la app y sin acceso a una terminal.
 
@@ -155,6 +158,7 @@ El objetivo es que el equipo solo pueda usarse para el diagnóstico: sin red, si
 
 ### Informe por Bluetooth
 * Botón **Informe** (barra superior): genera un HTML de ~4 KB, sin recursos externos y legible en el celular, con datos del equipo, resultado del checklist (con detalle por prueba), la prueba de estrés si se ejecutó (por componente) y un campo de comentarios. En la prueba de estrés muestra temperatura máxima y promedio y, si ocurrió, el throttling térmico; el veredicto térmico es breve («Temperaturas altas» / «Sobrecalentamiento») con una precaución corta, y **sin** recomendación de mantenimiento.
+* Formato **PDF** o **HTML** (selector junto al botón de envío). El PDF se genera con el Chrome de la imagen en modo sin pantalla (perfil aparte, unos 100 KB); solo se guarda y envía el formato elegido.
 * **Enviar por Bluetooth** busca celulares cercanos (8 s), se elige uno y se envía por OBEX Object Push con `bluez-obexd` (vía `gdbus`). En el celular solo hay que tener Bluetooth visible y pulsar *Aceptar*. Si el envío vía `obexd` falla, se empareja una vez (un toque, sin códigos) y se envía con un cliente OBEX propio por RFCOMM (la cola de errores muestra ambos motivos). **Ver** muestra una vista previa.
 * El informe se guarda en `/tmp/diagnost_reports/` (RAM en el Live: no queda nada en el equipo).
 

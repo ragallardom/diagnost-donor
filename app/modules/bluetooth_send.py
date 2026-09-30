@@ -11,6 +11,7 @@ paired, one "Just Works" pairing (no code to type) is tried and the send retried
 import glob
 import os
 import re
+import shutil
 import socket
 import struct
 import subprocess
@@ -19,7 +20,9 @@ import time
 
 REPORT_DIR = os.path.join(tempfile.gettempdir(), 'diagnost_reports')
 MAC_RE = re.compile(r'^[0-9A-F]{2}(:[0-9A-F]{2}){5}$')
-_SAFE_NAME_RE = re.compile(r'^[A-Za-z0-9._-]{1,80}\.html$')
+_SAFE_NAME_RE = re.compile(r'^[A-Za-z0-9._-]{1,80}\.(html|pdf)$')
+CHROME_CANDIDATES = ('google-chrome', 'google-chrome-stable', '/opt/google/chrome/google-chrome',
+                     'chromium-browser', 'chromium')
 
 OBEX = 'org.bluez.obex'
 SEND_TIMEOUT_SEC = 60       # the phone shows an "accept file" prompt: give the technician time
@@ -31,23 +34,69 @@ def _run(cmd, timeout=10):
 
 # ── Report file ─────────────────────────────────────────────────────────────
 
-def report_filename(serial, now=None):
-    """informe_<serial>_<YYYYmmdd-HHMM>.html with a filesystem-safe serial."""
+def report_filename(serial, now=None, ext='html'):
+    """informe_<serial>_<YYYYmmdd-HHMM>.<ext> with a filesystem-safe serial."""
     serial = re.sub(r'[^A-Za-z0-9]+', '', serial or '')[:24] or 'equipo'
-    return f"informe_{serial}_{time.strftime('%Y%m%d-%H%M', time.localtime(now))}.html"
+    return f"informe_{serial}_{time.strftime('%Y%m%d-%H%M', time.localtime(now))}.{ext}"
 
 
-def save_report(html, serial, max_bytes=200_000):
+def find_chrome():
+    override = os.environ.get('DIAG_CHROME')
+    if override and os.path.exists(override):
+        return override
+    for cand in CHROME_CANDIDATES:
+        path = shutil.which(cand) or (cand if os.path.isabs(cand) and os.path.exists(cand) else None)
+        if path:
+            return path
+    return None
+
+
+def html_to_pdf(html_path, pdf_path, timeout=40):
+    """Print an HTML file to PDF with headless Chrome (a separate profile: the kiosk Chrome is running)."""
+    chrome = find_chrome()
+    if not chrome:
+        raise RuntimeError('Chrome no disponible para crear el PDF')
+    profile = tempfile.mkdtemp(prefix='diag_pdf_')
+    try:
+        _run([chrome, '--headless', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage',
+              f'--user-data-dir={profile}', '--no-pdf-header-footer', f'--print-to-pdf={pdf_path}',
+              'file://' + html_path], timeout)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError('Tiempo agotado creando el PDF')
+    finally:
+        shutil.rmtree(profile, ignore_errors=True)
+    try:
+        with open(pdf_path, 'rb') as f:
+            ok = f.read(5) == b'%PDF-'
+    except OSError:
+        ok = False
+    if not ok:
+        raise RuntimeError('No se pudo crear el PDF')
+
+
+def save_report(html, serial, fmt='html', max_bytes=200_000):
     if not isinstance(html, str) or not html.strip():
         raise ValueError('Informe vacío')
     data = html.encode('utf-8')
     if len(data) > max_bytes:
         raise ValueError('Informe demasiado grande')
+    if fmt not in ('html', 'pdf'):
+        raise ValueError('Formato no válido')
     os.makedirs(REPORT_DIR, mode=0o700, exist_ok=True)
     name = report_filename(serial)
-    with open(os.path.join(REPORT_DIR, name), 'wb') as f:
+    html_path = os.path.join(REPORT_DIR, name)
+    with open(html_path, 'wb') as f:
         f.write(data)
-    return name
+    if fmt == 'html':
+        return name
+    pdf_name = name[:-len('.html')] + '.pdf'
+    try:
+        html_to_pdf(html_path, os.path.join(REPORT_DIR, pdf_name))
+    except RuntimeError as exc:
+        raise ValueError(str(exc))
+    finally:
+        os.unlink(html_path)          # only the chosen format is kept
+    return pdf_name
 
 
 def resolve_report(name):

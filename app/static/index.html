@@ -630,6 +630,11 @@
         <textarea id="report-comments" rows="3" maxlength="500" placeholder="Comentarios (opcional)"
           style="width: 100%; background: var(--bg-dark); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 6px; padding: 0.5rem; font: inherit; resize: vertical;"></textarea>
         <div style="display: flex; gap: 0.6rem;">
+          <select id="report-format" title="Formato del archivo"
+            style="background: var(--bg-dark); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 6px; padding: 0 0.6rem; font: inherit;">
+            <option value="pdf">PDF</option>
+            <option value="html">HTML</option>
+          </select>
           <button class="btn btn-block" id="btn-report-send" onclick="findPhonesForReport()">Enviar por
             Bluetooth</button>
           <button class="btn btn-secondary" onclick="toggleReportPreview()">Ver</button>

@@ -29,6 +29,36 @@ class ReportFileTests(unittest.TestCase):
         name = bs.save_report('<html>ok</html>', 'SN1')
         self.assertTrue(os.path.isfile(bs.resolve_report(name)))
 
+    def test_pdf_is_created_and_only_the_pdf_is_kept(self):
+        def fake_chrome(cmd, timeout=10):
+            out = [a for a in cmd if a.startswith('--print-to-pdf=')][0].split('=', 1)[1]
+            with open(out, 'wb') as f:
+                f.write(b'%PDF-1.4 fake')
+            return mock.Mock(returncode=0)
+
+        with mock.patch('bluetooth_send.find_chrome', return_value='/usr/bin/chrome'), \
+             mock.patch('bluetooth_send._run', side_effect=fake_chrome) as run:
+            name = bs.save_report('<html>ok</html>', 'SN1', 'pdf')
+        self.assertTrue(name.endswith('.pdf'))
+        self.assertEqual(os.listdir(self.tmp.name), [name])            # the temporary HTML is removed
+        cmd = run.call_args[0][0]
+        for flag in ('--headless', '--no-sandbox', '--no-pdf-header-footer'):
+            self.assertIn(flag, cmd)
+        self.assertTrue(any(a.startswith('--user-data-dir=') for a in cmd))   # never the kiosk profile
+        self.assertTrue(bs.resolve_report(name).endswith('.pdf'))
+
+    def test_pdf_failures_are_reported_and_leave_nothing_behind(self):
+        with mock.patch('bluetooth_send.find_chrome', return_value=None):
+            with self.assertRaises(ValueError):
+                bs.save_report('<html>ok</html>', 'SN1', 'pdf')
+        self.assertEqual(os.listdir(self.tmp.name), [])
+        with mock.patch('bluetooth_send.find_chrome', return_value='/x/chrome'), \
+             mock.patch('bluetooth_send._run', return_value=mock.Mock(returncode=0)):      # no file written
+            with self.assertRaises(ValueError):
+                bs.save_report('<html>ok</html>', 'SN1', 'pdf')
+        with self.assertRaises(ValueError):
+            bs.save_report('<html>ok</html>', 'SN1', 'docx')
+
     def test_rejects_empty_huge_and_path_names(self):
         for bad in ('', '   ', None, 5):
             with self.assertRaises(ValueError):

@@ -37,6 +37,7 @@ tr:last-child td{border-bottom:0}th{color:#5a6072;font-weight:600}
 .ok{background:#dcf5e8;color:#0a7a45}.fail{background:#fde2e2;color:#b42318}.pending{background:#eceef5;color:#5a6072}.warn{background:#fff0d1;color:#9a5b00}
 .sum{display:flex;gap:14px;margin-top:8px;font-weight:600}
 pre{white-space:pre-wrap;margin:8px 0;font:inherit}
+@page{size:A4;margin:12mm}@media print{body{background:#fff}}
 `;
 
 function reportStatus(pill) {
@@ -174,7 +175,7 @@ async function findPhonesForReport() {
   if (list) list.innerHTML = "";
   try {
     setReportStatus("Preparando informe...");
-    const saved = await (await apiPost("/api/report/save", { html: await getReportHtml(), serial: (lastSystemInfo && lastSystemInfo.serial) || "" })).json();
+    const saved = await (await apiPost("/api/report/save", { html: await getReportHtml(), serial: (lastSystemInfo && lastSystemInfo.serial) || "", format: document.getElementById("report-format")?.value || "html" })).json();
     if (!saved.success) throw new Error(saved.message || "No se pudo crear el informe");
     reportFileName = saved.name;
 
