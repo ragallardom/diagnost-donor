@@ -46,6 +46,7 @@ function reportStatus(pill) {
 }
 
 function reportDetail(id, detailId) {
+  if (isManualFail(id)) return "Marcado como fallo por el técnico";
   if (id === "chk-keyboard") {
     const m = (document.getElementById(id)?.innerText || "").match(/\((\d+\/\d+)\)/);
     return m ? `${m[1]} teclas` : "";

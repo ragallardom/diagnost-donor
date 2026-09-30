@@ -13,6 +13,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // 2. Request Keyboard Lock API for Escape, F11, Tab capture
   requestKeyboardLock();
 
+  initFailButtons();
   updateChecklistProgress();
   initBrightness();
 

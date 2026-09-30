@@ -159,6 +159,7 @@ El objetivo es que el equipo solo pueda usarse para el diagnóstico: sin red, si
 
 ### Checklist y control de energía
 * Barra superior fija con el estado de aprobación en mayúsculas de cada test.
+* Cada chip del checklist tiene una **✗** para marcar la prueba como fallida a mano (p. ej. un HDMI que no se detecta): queda en rojo aunque la app la dé por buena, otro clic la quita y **Reiniciar** borra las marcas. El teclado tiene además un botón «Marcar fallo». Las marcas aparecen en el informe.
 * Botón de reinicio de pruebas para reevaluar componentes rápidamente.
 * Opciones de apagado y reinicio limpio del equipo con modales de confirmación con diseño nativo.
 

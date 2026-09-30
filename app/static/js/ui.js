@@ -16,34 +16,56 @@ function updateChecklistProgress() {
   el.classList.toggle("has-failed", failed > 0);
 }
 
-function markCheckpassed(pillId, text) {
+// The technician can flag any test as failed by hand (things the app cannot detect, e.g. an HDMI
+// monitor that stays black). The flag wins over the automatic state; the automatic state is kept so
+// that unflagging restores it.
+const manualFails = new Set();
+const autoStates = {};   // pillId -> "passed" | "failed" | ""
+
+function setCheck(pillId, state, text) {
   const el = document.getElementById(pillId);
   if (el) {
-    el.classList.remove("failed");
-    el.classList.add("passed");
-    if (text) el.innerText = text;
+    autoStates[pillId] = state;
+    if (text) (el.querySelector(".chk-text") || el).innerText = text;
+    const shown = manualFails.has(pillId) ? "failed" : state;
+    el.classList.toggle("passed", shown === "passed");
+    el.classList.toggle("failed", shown === "failed");
+    el.classList.toggle("manual", manualFails.has(pillId));
   }
   updateChecklistProgress();
 }
 
-function markCheckfailed(pillId, text) {
-  const el = document.getElementById(pillId);
-  if (el) {
-    el.classList.remove("passed");
-    el.classList.add("failed");
-    if (text) el.innerText = text;
-  }
-  updateChecklistProgress();
+function markCheckpassed(pillId, text) { setCheck(pillId, "passed", text); }
+function markCheckfailed(pillId, text) { setCheck(pillId, "failed", text); }
+function unmarkCheckpassed(pillId, text) { setCheck(pillId, "", text); }
+
+function isManualFail(pillId) { return manualFails.has(pillId); }
+
+function toggleManualFail(pillId) {
+  if (manualFails.has(pillId)) manualFails.delete(pillId); else manualFails.add(pillId);
+  setCheck(pillId, autoStates[pillId] || "", null);
 }
 
-function unmarkCheckpassed(pillId, text) {
-  const el = document.getElementById(pillId);
-  if (el) {
-    el.classList.remove("passed");
-    el.classList.remove("failed");
-    if (text) el.innerText = text;
-  }
-  updateChecklistProgress();
+function clearManualFails() {
+  [...manualFails].forEach(id => { manualFails.delete(id); setCheck(id, autoStates[id] || "", null); });
+}
+
+// Adds the small "✗" button to every checklist chip (the text moves into its own span).
+function initFailButtons() {
+  document.querySelectorAll(".chk-bar-grid .chk-pill").forEach(pill => {
+    if (pill.querySelector(".chk-text")) return;
+    const text = document.createElement("span");
+    text.className = "chk-text";
+    text.innerText = pill.innerText;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "chk-fail-btn";
+    btn.innerText = "✗";
+    btn.title = "Marcar como fallo (otro clic lo quita)";
+    btn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); toggleManualFail(pill.id); });
+    pill.innerText = "";
+    pill.append(text, btn);
+  });
 }
 
 // FORMAT CPU SHORT NAME FOR QUICK STATS HEADER (All CPU generations supported)

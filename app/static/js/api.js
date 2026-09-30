@@ -8,7 +8,8 @@ let currentPowerAction = null;
 // 1. FULL DATA REFRESH (STATIC + DYNAMIC + RESET MANUAL TESTS + RUN AUTOMATIC ONES)
 async function refreshAllData() {
   try {
-    // 1. Reset all manual tests
+    // 1. Reset all manual tests (and the manual failure flags)
+    clearManualFails();
     if (typeof resetKeyboardTest === "function") resetKeyboardTest();
     if (typeof resetTouchpadTest === "function") resetTouchpadTest();
     if (typeof resetAudioTest === "function") resetAudioTest();
