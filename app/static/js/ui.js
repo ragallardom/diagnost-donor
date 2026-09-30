@@ -135,6 +135,41 @@ function formatCpuShortName(raw) {
   return clean.split(" ")[0];
 }
 
+// Brand shown before the short model in the top bar ("Lenovo T14 Gen 1", "HP EliteBook 845 G8").
+// Taken from the DMI vendor, falling back to the model string; empty for unknown/placeholder vendors.
+const BRAND_PATTERNS = [
+  [/lenovo/i, "Lenovo"],
+  [/hewlett|^hp\b|\bhp\b/i, "HP"],
+  [/dell/i, "Dell"],
+  [/asus/i, "ASUS"],
+  [/acer/i, "Acer"],
+  [/apple/i, "Apple"],
+  [/microsoft/i, "Microsoft"],
+  [/micro-star|\bmsi\b/i, "MSI"],
+  [/samsung/i, "Samsung"],
+  [/toshiba|dynabook/i, "Dynabook"],
+  [/huawei/i, "Huawei"],
+  [/lg electronics/i, "LG"],
+];
+
+function detectBrand(vendor, modelStr) {
+  for (const text of [vendor || "", modelStr || ""]) {
+    for (const [re, name] of BRAND_PATTERNS) {
+      if (re.test(text)) return name;
+    }
+  }
+  return "";
+}
+
+// Short model with its brand in front. The brand is not repeated if the short name already has it.
+function formatModelWithBrand(modelStr, vendor) {
+  const short = formatModelShortName(modelStr);
+  if (short === "--") return short;
+  const brand = detectBrand(vendor, modelStr);
+  if (!brand || short.toLowerCase().startsWith(brand.toLowerCase())) return short;
+  return `${brand} ${short}`;
+}
+
 // FORMAT LAPTOP / DESKTOP MODEL SHORT NAME FOR QUICK STATS HEADER (Dynamic multi-brand engine)
 function formatModelShortName(modelStr) {
   if (!modelStr || ["--", "N/A", "To be filled by O.E.M.", "Default string", "System Product Name"].includes(modelStr.trim())) {
@@ -221,7 +256,8 @@ function formatModelShortName(modelStr) {
 
   // 10. Universal clean fallback for any other laptop/motherboard model
   s = s.replace(/\b(Notebook\s+PC|Mobile\s+Workstation|Laptop\s+PC|Laptop|PC|System\s+Product\s+Name)\b/gi, "");
-  s = s.replace(/\s+/g, " ").trim();
+  s = s.replace(/\s+/g, " ").replace(/[\s\/]+$/, "").trim();
+  if (/^(Generico|Generic)$/i.test(s)) return "--";
 
   if (s.length > 24) {
     return s.slice(0, 24).trim();
@@ -244,7 +280,7 @@ function updateSystemTab(sys) {
   const quickModelEl = document.getElementById("quick-model");
   const sysVendorEl = document.getElementById("sys-vendor");
   if (sysModelEl) sysModelEl.innerText = cardModel || "Detectando modelo...";
-  if (quickModelEl) quickModelEl.innerText = formatModelShortName(cardModel);
+  if (quickModelEl) quickModelEl.innerText = formatModelWithBrand(cardModel, sys.vendor);
   if (sysVendorEl) sysVendorEl.innerText = sys.vendor || "--";
 
   const sysCpuEl = document.getElementById("sys-cpu");
