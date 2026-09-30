@@ -43,6 +43,7 @@
   <!-- Sticky Checklist QA Bar -->
   <div class="checklist-sticky-bar">
     <span class="chk-label">Checklist QA:</span>
+    <span class="chk-progress" id="chk-progress" title="Pruebas aprobadas">0/13</span>
     <div class="chk-bar-grid">
       <a href="#sec-system" class="chk-pill" id="chk-cpu">CPU</a>
       <a href="#sec-system" class="chk-pill" id="chk-screen">Pantalla</a>
@@ -96,10 +97,9 @@
                 style="flex: 1; white-space: nowrap;" title="Test rápido de estabilidad y velocidad de CPU">Test de
                 CPU</button>
             </div>
-            <div
-              style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.4rem; font-size: 0.73rem; font-family: var(--font-mono);">
-              <span id="screen-test-status" style="color: var(--text-muted);">Pantalla: Pendiente</span>
-              <span id="cpu-test-status" style="color: #a855f7;">Analizando CPU...</span>
+            <div class="test-status-rows">
+              <div class="test-status-row"><span class="status-key">Pantalla</span><span id="screen-test-status" style="color: var(--text-muted);">Pendiente</span></div>
+              <div class="test-status-row"><span class="status-key">CPU</span><span id="cpu-test-status" style="color: var(--violet-accent);">Analizando CPU...</span></div>
             </div>
           </div>
         </div>

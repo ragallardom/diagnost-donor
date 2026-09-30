@@ -662,7 +662,7 @@ function finishScreenTest() {
   closeScreenTestModal();
   const statusEl = document.getElementById("screen-test-status");
   if (statusEl) {
-    statusEl.innerText = "Pantalla: Aprobada";
+    statusEl.innerText = "Aprobada";
     statusEl.style.color = "var(--success-green)";
   }
   markCheckpassed("chk-screen", "PANTALLA");
@@ -694,7 +694,7 @@ function resetScreenTest() {
   screenTestCompleted = false;
   const statusEl = document.getElementById("screen-test-status");
   if (statusEl) {
-    statusEl.innerText = "Pantalla: Pendiente";
+    statusEl.innerText = "Pendiente";
     statusEl.style.color = "var(--text-muted)";
   }
   unmarkCheckpassed("chk-screen", "Pantalla");

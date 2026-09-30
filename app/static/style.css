@@ -5,7 +5,7 @@
   --bg-card-hover: #19192e;
   --border-color: #241e42;
   --text-main: #f1f5f9;
-  --text-muted: #8b5cf6;
+  --text-muted: #94a3b8; /* secondary text: 7.3:1 on cards (violet is kept for accents) */
   --primary-violet: #7c3aed;
   --violet-hover: #6d28d9;
   --violet-accent: #a855f7;
@@ -160,9 +160,9 @@ body.stealth-purple-theme {
   background-color: var(--bg-card);
   color: var(--text-muted);
   border: 1px solid var(--border-color);
-  padding: 0.35rem 0.85rem;
+  padding: 0.35rem 0.7rem;
   border-radius: 6px;
-  font-size: 0.8rem;
+  font-size: 0.85rem;
   font-weight: 700;
   text-decoration: none;
   display: flex;
@@ -175,6 +175,66 @@ body.stealth-purple-theme {
   background-color: var(--bg-card-hover);
   color: var(--text-main);
   border-color: var(--primary-violet);
+}
+
+/* Status is shown with an icon as well as a color (color-blind safe): ○ pending, ✓ passed, ✗ failed. */
+.chk-pill::before {
+  content: "○";
+  font-weight: 400;
+  opacity: 0.7;
+}
+
+.chk-pill.passed::before {
+  content: "✓";
+  font-weight: 800;
+  opacity: 1;
+}
+
+.chk-pill.failed::before {
+  content: "✗";
+  font-weight: 800;
+  opacity: 1;
+}
+
+.chk-progress {
+  font-family: var(--font-mono);
+  font-weight: 800;
+  font-size: 0.9rem;
+  color: var(--text-main);
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 0.25rem 0.55rem;
+}
+
+.chk-progress.all-passed {
+  color: var(--success-green);
+  border-color: var(--success-green);
+}
+
+.chk-progress.has-failed {
+  color: var(--danger-red);
+  border-color: var(--danger-red);
+}
+
+.test-status-rows {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+}
+
+.test-status-row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+}
+
+.test-status-row .status-key {
+  min-width: 4.2rem;
+  font-weight: 700;
+  color: var(--text-main);
 }
 
 .chk-pill.passed {

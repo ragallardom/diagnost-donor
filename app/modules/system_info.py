@@ -6,6 +6,7 @@ Reads directly from /sys/class/dmi/id/ and /proc/cpuinfo to work reliably withou
 """
 
 import os
+import re
 import glob
 import platform
 import subprocess
@@ -156,11 +157,32 @@ def get_ram_info():
         pass
     return {'total_gb': 0, 'used_gb': 0, 'avail_gb': 0, 'percent_used': 0}
 
+# Lenovo stores the machine type / part number (20S0S1EJ00, 21HDCTO1WW...) in product_name and
+# the marketing name ("ThinkPad T14 Gen 1") in product_version / product_family.
+_MACHINE_TYPE_RE = re.compile(r'^[0-9][0-9A-Z]{6,11}$')
+
+
+def resolve_model_names(product_name, version, family):
+    """(model, sku): use the friendly name as the model when product_name is only a part number.
+
+    sku is the part number to show in parentheses, or the untouched version string otherwise.
+    """
+    product_name = (product_name or '').strip()
+    version = (version or '').strip()
+    family = (family or '').strip()
+    if _MACHINE_TYPE_RE.match(product_name):
+        for cand in (version, family):
+            if (clean_dmi_value(cand) and re.search(r'[A-Za-z]{3,}', cand)
+                    and not _MACHINE_TYPE_RE.match(cand)):
+                return cand, product_name
+    return product_name or family, version
+
+
 def get_system_summary():
-    import re
     vendor = (read_dmi_field('sys_vendor') or read_dmi_field('board_vendor') or 'Generico').strip()
-    model = (read_dmi_field('product_name') or read_dmi_field('product_family') or read_dmi_field('board_name') or 'Laptop / PC').strip()
-    version = (read_dmi_field('product_version') or '').strip()
+    model, version = resolve_model_names(read_dmi_field('product_name'), read_dmi_field('product_version'),
+                                         read_dmi_field('product_family'))
+    model = (model or read_dmi_field('board_name') or 'Laptop / PC').strip()
     # A placeholder serial ("Default string", "To be filled by O.E.M."...) would be recorded as if it
     # were real: fall back to the board serial, then to N/A.
     serial = (clean_dmi_value(read_dmi_field('product_serial'))

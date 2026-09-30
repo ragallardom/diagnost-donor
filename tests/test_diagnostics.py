@@ -255,6 +255,29 @@ class SystemInfoTests(unittest.TestCase):
             self.assertTrue(system_info.check_tpm_status()['is_tpm2'])
 
 
+class LenovoModelNameTests(unittest.TestCase):
+    def test_part_number_is_not_used_as_the_model(self):
+        for pn, ver, fam, expected in (
+            ('20S0S1EJ00', 'ThinkPad T14 Gen 1', 'ThinkPad T14 Gen 1', 'ThinkPad T14 Gen 1'),
+            ('20XKS1AA00', 'ThinkPad T14 Gen 2', 'None', 'ThinkPad T14 Gen 2'),
+            ('20W0S0XX00', 'None', 'ThinkPad T14 Gen 2', 'ThinkPad T14 Gen 2'),   # name only in family
+            ('21HDCTO1WW', 'ThinkPad T14 Gen 4', 'ThinkPad T14 Gen 4', 'ThinkPad T14 Gen 4'),
+        ):
+            model, sku = system_info.resolve_model_names(pn, ver, fam)
+            self.assertEqual(model, expected)
+            self.assertEqual(sku, pn)
+
+    def test_other_vendors_and_missing_names_are_untouched(self):
+        self.assertEqual(system_info.resolve_model_names('EliteBook 840 G8', '', 'HP EliteBook'), ('EliteBook 840 G8', ''))
+        self.assertEqual(system_info.resolve_model_names('20S0S1EJ00', 'None', 'None')[0], '20S0S1EJ00')
+
+    def test_summary_shows_name_first_and_part_number_in_parentheses(self):
+        d = {'sys_vendor': 'LENOVO', 'product_name': '20S0S1EJ00',
+             'product_version': 'ThinkPad T14 Gen 1', 'product_family': 'ThinkPad T14 Gen 1'}
+        with mock.patch('system_info.read_dmi_field', side_effect=lambda f: d.get(f)):
+            self.assertEqual(system_info.get_system_summary()['model'], 'LENOVO ThinkPad T14 Gen 1 (20S0S1EJ00)')
+
+
 class CpuBenchmarkTests(unittest.TestCase):
     def test_real_run_uses_every_cpu_and_agrees(self):
         res = cpu_benchmark.run_cpu_benchmark(iterations=20_000)

@@ -4,6 +4,18 @@
    ============================================================================== */
 
 // CHECKLIST STATE MANAGER
+// "n/total" counter next to the checklist title: passed pills over all pills.
+function updateChecklistProgress() {
+  const el = document.getElementById("chk-progress");
+  if (!el) return;
+  const pills = document.querySelectorAll(".chk-bar-grid .chk-pill");
+  const passed = document.querySelectorAll(".chk-bar-grid .chk-pill.passed").length;
+  const failed = document.querySelectorAll(".chk-bar-grid .chk-pill.failed").length;
+  el.innerText = `${passed}/${pills.length}`;
+  el.classList.toggle("all-passed", pills.length > 0 && passed === pills.length);
+  el.classList.toggle("has-failed", failed > 0);
+}
+
 function markCheckpassed(pillId, text) {
   const el = document.getElementById(pillId);
   if (el) {
@@ -11,6 +23,7 @@ function markCheckpassed(pillId, text) {
     el.classList.add("passed");
     if (text) el.innerText = text;
   }
+  updateChecklistProgress();
 }
 
 function markCheckfailed(pillId, text) {
@@ -20,6 +33,7 @@ function markCheckfailed(pillId, text) {
     el.classList.add("failed");
     if (text) el.innerText = text;
   }
+  updateChecklistProgress();
 }
 
 function unmarkCheckpassed(pillId, text) {
@@ -29,6 +43,7 @@ function unmarkCheckpassed(pillId, text) {
     el.classList.remove("failed");
     if (text) el.innerText = text;
   }
+  updateChecklistProgress();
 }
 
 // FORMAT CPU SHORT NAME FOR QUICK STATS HEADER (All CPU generations supported)
@@ -127,6 +142,11 @@ function formatModelShortName(modelStr) {
   }
 
   let s = modelStr.trim();
+
+  // "LENOVO 20S0S1EJ00 (ThinkPad T14 Gen 1)": the part number is outside and the real
+  // name inside the parentheses. Keep the name, not the code.
+  const codeThenName = s.match(/^(?:LENOVO\s+)?[0-9][0-9A-Z]{6,11}\s*\(([^)]*[A-Za-z]{3,}[^)]*)\)$/i);
+  if (codeThenName) s = codeThenName[1].trim();
 
   // Strip anything in parentheses (e.g. part numbers / SKU codes like "(SBKPFV3)", hardware revs "(1.0)")
   s = s.replace(/\s*\([^)]*\)/g, "").trim();
