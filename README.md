@@ -55,7 +55,8 @@ wget -O Aplicaciones/google-chrome-stable_current_amd64.deb https://dl.google.co
 ## Módulos y pruebas incluidas
 
 ### Información del sistema
-* Lectura DMI: fabricante, modelo exacto y número de serie (S/N). Los valores de relleno del fabricante (`Default string`, `To be filled by O.E.M.`, `None`…) se descartan: si el S/N del sistema no es válido se usa el de la placa y, si tampoco, se muestra `N/A`.
+* Lectura DMI: fabricante, modelo exacto y número de serie (S/N). En Lenovo el part number (`20S0S1EJ00`) no se muestra: el modelo sale del nombre comercial (`ThinkPad T14 Gen 1`) y el part number queda solo como dato interno.
+* Barra superior: marca + modelo corto, p. ej. `Lenovo T14 Gen 5`, `Lenovo X1 Carbon Gen 11` (también los nombres antiguos «6th»/«7th»), `HP EliteBook 845 G8`, `HP EliteBook 840 Aero G8`, `HP ZBook Firefly 14 G8`. Cubierto por `tests/test_model_names.py` (requiere `node`). Los valores de relleno del fabricante (`Default string`, `To be filled by O.E.M.`, `None`…) se descartan: si el S/N del sistema no es válido se usa el de la placa y, si tampoco, se muestra `N/A`.
 * TPM: solo se da por 2.0 si el kernel lo confirma (`tpm_version_major` o `/dev/tpmrm0`); un `/dev/tpm0` sin versión se muestra como «versión no confirmada».
 * Placa base, versión y fecha de BIOS.
 * Detección de pantallas externas conectadas por HDMI o DisplayPort (filtrando el panel interno eDP). Si el kernel informa `connected` / `disconnected` esa respuesta es definitiva; solo se recurre a EDID, modos o `enabled` cuando el estado es desconocido.

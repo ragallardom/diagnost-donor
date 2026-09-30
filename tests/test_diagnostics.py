@@ -271,11 +271,13 @@ class LenovoModelNameTests(unittest.TestCase):
         self.assertEqual(system_info.resolve_model_names('EliteBook 840 G8', '', 'HP EliteBook'), ('EliteBook 840 G8', ''))
         self.assertEqual(system_info.resolve_model_names('20S0S1EJ00', 'None', 'None')[0], '20S0S1EJ00')
 
-    def test_summary_shows_name_first_and_part_number_in_parentheses(self):
+    def test_summary_hides_the_part_number_but_exposes_it_separately(self):
         d = {'sys_vendor': 'LENOVO', 'product_name': '20S0S1EJ00',
              'product_version': 'ThinkPad T14 Gen 1', 'product_family': 'ThinkPad T14 Gen 1'}
         with mock.patch('system_info.read_dmi_field', side_effect=lambda f: d.get(f)):
-            self.assertEqual(system_info.get_system_summary()['model'], 'LENOVO ThinkPad T14 Gen 1 (20S0S1EJ00)')
+            summary = system_info.get_system_summary()
+        self.assertEqual(summary['model'], 'LENOVO ThinkPad T14 Gen 1')
+        self.assertEqual(summary['part_number'], '20S0S1EJ00')
 
 
 class CpuBenchmarkTests(unittest.TestCase):

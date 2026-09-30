@@ -199,8 +199,10 @@ def get_system_summary():
     # Deduplicate repeated brand names if any (e.g. "HP HP ...")
     full_model_str = re.sub(r'\b(HP|LENOVO|DELL|ASUS|ACER)\s+\1\b', r'\1', full_model_str, flags=re.IGNORECASE)
 
-    # Keep part number / SKU version in parentheses for technical card reference (e.g. "(SBKPFV3)")
-    if version and version.lower() not in full_model_str.lower():
+    # A Lenovo machine type (20S0S1EJ00...) is kept out of the displayed model; it is exposed
+    # separately as part_number. Other SKU / version strings stay in parentheses (e.g. "(SBKPFV3)").
+    part_number = version if _MACHINE_TYPE_RE.match(version) else None
+    if version and not part_number and version.lower() not in full_model_str.lower():
         if not re.match(r'^(None|Default string|To be filled by O\.E\.M\.|System Version)$', version, re.IGNORECASE):
             full_model_str = f"{full_model_str} ({version})"
 
@@ -208,6 +210,7 @@ def get_system_summary():
 
     return {
         'model': full_model_str,
+        'part_number': part_number,
         'vendor': vendor,
         'serial': serial,
         'cpu': cpu_model,

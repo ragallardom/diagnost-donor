@@ -171,6 +171,11 @@ function formatModelWithBrand(modelStr, vendor) {
 }
 
 // FORMAT LAPTOP / DESKTOP MODEL SHORT NAME FOR QUICK STATS HEADER (Dynamic multi-brand engine)
+// "6th", "7th Gen", "3rd" -> "Gen 6", "Gen 7", "Gen 3". "Gen 9" is left as is.
+function normalizeGeneration(text) {
+  return text.replace(/(\d+)(?:st|nd|rd|th)(?:\s+Gen)?/i, "Gen $1").replace(/\s+/g, " ").trim();
+}
+
 function formatModelShortName(modelStr) {
   if (!modelStr || ["--", "N/A", "To be filled by O.E.M.", "Default string", "System Product Name"].includes(modelStr.trim())) {
     return "--";
@@ -192,16 +197,17 @@ function formatModelShortName(modelStr) {
   // Strip machine type codes before model name (e.g. '21MLCTO1WW ThinkPad T14 Gen 6')
   s = s.replace(/^[0-9A-Z]{4,10}\s+(ThinkPad|ThinkBook|IdeaPad|Legion|Yoga|EliteBook|ProBook|Latitude|Precision|XPS|ZBook)/i, "$1");
 
-  // 2. Lenovo ThinkPad X1 Carbon / Yoga / Nano / Extreme / Titanium / Fold
-  const tpX1 = s.match(/ThinkPad\s+(X1\s+(?:Carbon|Yoga|Nano|Extreme|Titanium|Fold)(?:\s+(?:Gen\s+\d+|\d+th\s+Gen))?)/i);
+  // 2. Lenovo ThinkPad X1 (Carbon / Yoga / Nano / Extreme / Titanium Yoga / Fold / 2-in-1).
+  // Generations come as "Gen 9" or, on older firmware, "6th" / "7th Gen": all become "Gen N".
+  const tpX1 = s.match(/ThinkPad\s+(X1\s+(?:Carbon|Yoga|Nano|Extreme|Titanium\s+Yoga|Titanium|Fold(?:\s+\d+)?|2-in-1)(?:\s+(?:Gen\s+\d+|\d+(?:st|nd|rd|th)(?:\s+Gen)?))?)/i);
   if (tpX1) {
-    return tpX1[1].replace(/(\d+)th\s+Gen/i, "Gen $1");
+    return normalizeGeneration(tpX1[1]);
   }
 
-  // 3. Lenovo ThinkPad Series (T14, T14s, T15, T16, T480, T490, L14, L15, E14, E15, P14s, P15, P16, P1, X13, X13s, X280, X390, Z13, Z16, etc.)
-  const tpMatch = s.match(/ThinkPad\s+([A-Z]\d+[a-z]?(?:\s+(?:Gen\s+\d+|\d+th\s+Gen))?)/i);
+  // 3. Lenovo ThinkPad Series (T14, T14s, T16, T480, L14, E14, P14s, P1, X13, X13 Yoga, Z13...)
+  const tpMatch = s.match(/ThinkPad\s+([A-Z]\d+[a-z]?(?:\s+(?:Yoga|Nano|Extreme))?(?:\s+(?:Gen\s+\d+|\d+(?:st|nd|rd|th)(?:\s+Gen)?))?)/i);
   if (tpMatch) {
-    return tpMatch[1].replace(/(\d+)th\s+Gen/i, "Gen $1");
+    return normalizeGeneration(tpMatch[1]);
   }
 
   // 4. Lenovo ThinkBook / IdeaPad / Legion / Yoga
@@ -214,11 +220,15 @@ function formatModelShortName(modelStr) {
   }
 
   // 5. HP (EliteBook, ProBook, ZBook, Dragonfly, Pavilion, Envy, Spectre, Omen, Victus)
-  const hpMatch = s.match(/(EliteBook|ProBook|ZBook|Dragonfly|Pavilion|Envy|Spectre|Omen|Victus)\s+([^,]+)/i);
+  const hpMatch = s.match(/(Elite\s+Dragonfly|EliteBook|ProBook|ZBook|Dragonfly|Pavilion|Envy|Spectre|Omen|Victus)\s+([^,]+)/i);
   if (hpMatch) {
     const family = hpMatch[1];
     let rest = hpMatch[2];
-    rest = rest.replace(/\d+(?:\.\d+)?\s*(?:inch|\"|\-inch)/gi, "");
+    if (/^zbook$/i.test(family)) {
+      rest = rest.replace(/(\d+(?:\.\d+)?)\s*(?:inch|"|-inch)/gi, "$1");
+    } else {
+      rest = rest.replace(/\d+(?:\.\d+)?\s*(?:inch|"|-inch)/gi, "");
+    }
     rest = rest.replace(/\b(Notebook\s+PC|Mobile\s+Workstation|Laptop\s+PC|Laptop|PC)\b/gi, "");
     rest = rest.replace(/\s+/g, " ").trim();
     return `${family} ${rest}`.trim();
