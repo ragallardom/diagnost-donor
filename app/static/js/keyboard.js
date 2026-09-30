@@ -210,6 +210,7 @@ function initKeyListeners() {
         }
         closeOpalModal();
         if (typeof closePowerModal === "function") closePowerModal();
+        if (typeof closeReportModal === "function") closeReportModal();
       } else if (e.key === "Enter" && e.target.id === "opal-psid-input") {
         e.preventDefault();
         submitOpalRevert();

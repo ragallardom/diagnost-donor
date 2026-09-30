@@ -52,6 +52,7 @@ from opal_diag import (
     execute_nvme_crypto_erase,
     validate_target_device,
 )
+import bluetooth_send
 from brightness import get_brightness, set_brightness, apply_default_once
 from stress_diag import start_stress_test, stop_stress_test, get_stress_status, report_gpu_result
 
@@ -170,6 +171,7 @@ _BT_RECEIVER_LOCK = threading.Lock()
 start_bluetooth_receiver = _serialized(start_bluetooth_receiver, _BT_RECEIVER_LOCK)
 stop_bluetooth_receiver = _serialized(stop_bluetooth_receiver, _BT_RECEIVER_LOCK)
 
+_BT_SEND_LOCK = threading.Lock()   # one scan / send at a time
 _POWER_LOCK = threading.Lock()
 
 
@@ -356,6 +358,27 @@ class DiagnosticHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_json(start_stress_test(components=comps, level=lvl))
             except Exception as exc:
                 self.send_json({'success': False, 'message': f'Error iniciando estrés: {exc}'}, 400)
+            return
+
+        if self.path == '/api/report/save':
+            try:
+                name = bluetooth_send.save_report(payload.get('html'), str(payload.get('serial') or ''))
+                self.send_json({'success': True, 'name': name})
+            except ValueError as exc:
+                self.send_json({'success': False, 'message': str(exc)}, 400)
+            return
+
+        if self.path == '/api/bluetooth/scan':
+            try:
+                with _BT_SEND_LOCK:
+                    self.send_json({'success': True, 'devices': bluetooth_send.scan_devices()})
+            except Exception as exc:
+                self.send_json({'success': False, 'devices': [], 'message': str(exc)[:160]})
+            return
+
+        if self.path == '/api/bluetooth/send':
+            with _BT_SEND_LOCK:
+                self.send_json(bluetooth_send.send_report(str(payload.get('address') or ''), payload.get('name')))
             return
 
         if self.path == '/api/brightness':

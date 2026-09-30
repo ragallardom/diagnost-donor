@@ -267,6 +267,7 @@ fio
 # Bluetooth & Wireless OBEX Sharing
 bluez
 bluez-obexd
+libglib2.0-bin
 PKGEOF
 
 # ── 4b. Instalar Google Chrome y paquetes desde Aplicaciones/ ──

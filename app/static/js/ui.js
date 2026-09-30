@@ -278,6 +278,7 @@ function formatModelShortName(modelStr) {
 // 1. UPDATE SYSTEM IDENTIFICATION & CPU
 function updateSystemTab(sys) {
   if (!sys) return;
+  lastSystemInfo = sys;
 
   const serialStr = sys.serial && sys.serial !== 'N/A' ? sys.serial : 'N/A';
   const headerSerialEl = document.getElementById("header-serial");
@@ -317,6 +318,7 @@ function updateSystemTab(sys) {
 function updateBatteryTab(batteries) {
   if (!batteries || batteries.length === 0) return;
   const bat = Array.isArray(batteries) ? batteries[0] : batteries;
+  lastBatteryInfo = bat;
 
   const quickBat = document.getElementById("quick-bat");
   const quickCharge = document.getElementById("quick-charge-status");
@@ -451,6 +453,7 @@ let _lastUsbStorageJson = "";
 // 4. UPDATE STORAGE (INTERNAL SSD/HDD & USB EXTERNAL DRIVES)
 function updateStorageTab(storage) {
   if (!storage) return;
+  lastStorageInfo = Array.isArray(storage) ? { internal: storage.filter(s => !s.is_usb), usb: storage.filter(s => s.is_usb) } : storage;
 
   let internalList = [];
   let usbList = [];

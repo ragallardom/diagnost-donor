@@ -152,6 +152,11 @@ El objetivo es que el equipo solo pueda usarse para el diagnóstico: sin red, si
 * **API local protegida:** Todas las acciones (PSID revert, borrado criptográfico, apagado, estrés, volumen, Bluetooth) exigen un token de sesión que el servidor inyecta en la página. Se rechazan las peticiones con `Host` u `Origin` ajenos y los dispositivos objetivo se validan (solo discos completos; nunca el pendrive de arranque).
 * **Control de arranque:** Validación obligatoria de UEFI Secure Boot activo y módulo TPM 2.0 funcional al iniciar.
 
+### Informe por Bluetooth
+* Botón **Informe** (barra superior): genera un HTML de ~4 KB, sin recursos externos y legible en el celular, con datos del equipo, resultado del checklist (con detalle por prueba), la prueba de estrés si se ejecutó (por componente, temperatura máxima y veredicto térmico) y un campo de comentarios.
+* **Enviar por Bluetooth** busca celulares cercanos (8 s), se elige uno y se envía por OBEX Object Push con `bluez-obexd` (vía `gdbus`). En el celular solo hay que tener Bluetooth visible y pulsar *Aceptar*. Si el celular no está emparejado se intenta un emparejamiento de un toque (sin códigos) y se reintenta una vez. **Ver** muestra una vista previa.
+* El informe se guarda en `/tmp/diagnost_reports/` (RAM en el Live: no queda nada en el equipo).
+
 ### Checklist y control de energía
 * Barra superior fija con el estado de aprobación en mayúsculas de cada test.
 * Botón de reinicio de pruebas para reevaluar componentes rápidamente.

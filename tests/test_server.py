@@ -55,6 +55,23 @@ class ServerGuardTests(unittest.TestCase):
         self.assertEqual(resp.status, 200)
         rep.assert_called_once_with({'frames': 10, 'avg_fps': 30})
 
+    def test_report_and_bluetooth_routes_need_the_token(self):
+        for path in ('/api/report/save', '/api/bluetooth/scan', '/api/bluetooth/send'):
+            resp, _ = self.post(path, {})
+            self.assertEqual(resp.status, 403, path)
+
+    def test_bluetooth_send_reaches_the_module(self):
+        with mock.patch('server.bluetooth_send.send_report', return_value={'success': True}) as send:
+            resp, data = self.post('/api/bluetooth/send', {'address': 'AA:BB:CC:DD:EE:01', 'name': 'informe_x.html'},
+                                   token=server.SESSION_TOKEN, origin=f'http://127.0.0.1:{self.port}')
+        self.assertEqual(resp.status, 200)
+        send.assert_called_once_with('AA:BB:CC:DD:EE:01', 'informe_x.html')
+
+    def test_report_save_rejects_empty(self):
+        resp, _ = self.post('/api/report/save', {'html': ''}, token=server.SESSION_TOKEN,
+                            origin=f'http://127.0.0.1:{self.port}')
+        self.assertEqual(resp.status, 400)
+
     def test_index_injects_session_token(self):
         resp, data = self.request('GET', '/')
         self.assertEqual(resp.status, 200)
