@@ -165,7 +165,7 @@ def get_battery_info():
 
         # 3. Determine status_es and errors (clean status without redundant percentage)
         if is_charging:
-            status_es = "Cargando"
+            status_es = "Conectado cargando"
         elif is_full:
             if ac_online:
                 status_es = "Carga Completa"
@@ -177,12 +177,12 @@ def get_battery_info():
             # AC is plugged in, not charging yet, not full, not in conservation
             if up_status_lower == 'pending-charge' or ac_duration < 10.0:
                 # Negotiation / handshake grace period (first 10 seconds of plugging in)
-                status_es = "Cargador Conectado (Iniciando carga...)"
+                status_es = "Conectado, iniciando carga"
             elif capacity < 90 and (status_lower in ['not charging', 'discharging'] or up_status_lower in ['not-charging', 'discharging']):
                 # Sustained non-charging state after 10+ seconds
                 has_charge_error = True
                 error_msg = "CARGADOR CONECTADO PERO SIN CARGA (Posible fallo de puerto, cargador insuficiente o umbral BIOS)"
-                status_es = "Conectado / Batería No Carga"
+                status_es = "Conectado, sin carga"
             else:
                 status_es = "Cargador Conectado"
         else:

@@ -135,6 +135,16 @@ class BatteryTests(unittest.TestCase):
                          'energy_full_design': 50_000_000, 'energy_full': 40_000_000})
         self.assertEqual(bat['health_percent'], 80.0)
 
+    def test_charger_status_texts(self):
+        base = {'capacity': 50, 'energy_full_design': 50_000_000, 'energy_full': 40_000_000}
+        with mock.patch('battery.is_ac_online_sysfs', return_value=True):
+            charging = self._bat(dict(base, status='Charging'))
+            self.assertEqual(charging['status_es'], 'Conectado cargando')
+            with mock.patch('battery._AC_TRACKER', {'last_ac_online': True, 'ac_connect_time': 1.0}):
+                stuck = self._bat(dict(base, status='Not charging'))
+        self.assertEqual(stuck['status_es'], 'Conectado, sin carga')
+        self.assertTrue(stuck['has_charge_error'])
+
     def test_no_battery_placeholder_has_no_health(self):
         with mock.patch('battery.glob.glob', return_value=[]):
             bat = battery.get_battery_info()[0]

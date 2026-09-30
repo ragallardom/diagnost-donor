@@ -72,6 +72,7 @@ wget -O Aplicaciones/google-chrome-stable_current_amd64.deb https://dl.google.co
 * Salud real de la batería (`Full Capacity / Design Capacity`). Si la batería no informa ambas capacidades se muestra `N/D`, nunca un 100 % inventado.
 * Contador de ciclos de carga con cuadro de referencia industrial (0-300: Excelente, 300-500: Normal / Buen estado, 500-800: Desgaste moderado, >800: Desgaste alto).
 * Capacidad de diseño vs actual (Wh), porcentaje de carga y voltaje en tiempo real.
+* Estado del cargador en la barra superior: «Conectado cargando» o «Conectado, sin carga» (en rojo, si está enchufado pero la batería no carga).
 * Detección precisa de anomalías de carga con eliminación de falsos positivos:
   * Reconocimiento de batería al 100% o carga completa sin emitir falsas alertas de carga detenida.
   * Soporte para umbrales de conservación en BIOS (ASUS, Lenovo, Dell a 60% u 80%).
@@ -153,7 +154,7 @@ El objetivo es que el equipo solo pueda usarse para el diagnóstico: sin red, si
 * **Control de arranque:** Validación obligatoria de UEFI Secure Boot activo y módulo TPM 2.0 funcional al iniciar.
 
 ### Informe por Bluetooth
-* Botón **Informe** (barra superior): genera un HTML de ~4 KB, sin recursos externos y legible en el celular, con datos del equipo, resultado del checklist (con detalle por prueba), la prueba de estrés si se ejecutó (por componente) y un campo de comentarios. En la prueba de estrés muestra temperatura máxima y promedio y, si ocurrió, el throttling térmico; el veredicto térmico es breve («Temperaturas altas» / «Sobrecalentamiento») y **sin** recomendación de mantenimiento.
+* Botón **Informe** (barra superior): genera un HTML de ~4 KB, sin recursos externos y legible en el celular, con datos del equipo, resultado del checklist (con detalle por prueba), la prueba de estrés si se ejecutó (por componente) y un campo de comentarios. En la prueba de estrés muestra temperatura máxima y promedio y, si ocurrió, el throttling térmico; el veredicto térmico es breve («Temperaturas altas» / «Sobrecalentamiento») con una precaución corta, y **sin** recomendación de mantenimiento.
 * **Enviar por Bluetooth** busca celulares cercanos (8 s), se elige uno y se envía por OBEX Object Push con `bluez-obexd` (vía `gdbus`). En el celular solo hay que tener Bluetooth visible y pulsar *Aceptar*. Si el envío vía `obexd` falla, se empareja una vez (un toque, sin códigos) y se envía con un cliente OBEX propio por RFCOMM (la cola de errores muestra ambos motivos). **Ver** muestra una vista previa.
 * El informe se guarda en `/tmp/diagnost_reports/` (RAM en el Live: no queda nada en el equipo).
 
