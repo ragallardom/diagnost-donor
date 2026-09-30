@@ -11,6 +11,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'app', 'modules'))
 
 import battery  # noqa: E402
+import brightness  # noqa: E402
+import thermal  # noqa: E402
 import bluetooth_diag  # noqa: E402
 import cpu_benchmark  # noqa: E402
 import display_hdmi_diag  # noqa: E402
@@ -30,8 +32,7 @@ class SmartHealthTests(unittest.TestCase):
     def test_no_data_is_unknown_never_healthy(self):
         for data in (None, {}, {'_parsed_text': True, 'tbw_tb': 3}):
             self.assertEqual(storage_diag.evaluate_smart_health(data)['level'], 'unknown')
-        self.assertNotIn('100%', storage_diag.smart_status_label(None))
-        self.assertIn('no disponible', storage_diag.smart_status_label(None))
+        self.assertEqual(storage_diag.smart_status_label(None), 'SMART no disponible')
 
     def test_clean_nvme_is_ok(self):
         data = {'smart_status': {'passed': True},
@@ -52,8 +53,15 @@ class SmartHealthTests(unittest.TestCase):
 
     def test_nvme_media_errors_and_wear_warn(self):
         res = storage_diag.evaluate_smart_health(
-            {'nvme_smart_health_information_log': {'media_errors': 4, 'percentage_used': 95}})
+            {'nvme_smart_health_information_log': {'media_errors': 40, 'percentage_used': 95}})
         self.assertEqual(res['level'], 'warning')
+
+    def test_minor_counts_are_not_reported(self):
+        res = storage_diag.evaluate_smart_health(
+            {'nvme_smart_health_information_log': {'media_errors': 3, 'percentage_used': 20}})
+        self.assertEqual(res['level'], 'ok')
+        res = storage_diag.evaluate_smart_health(ata((5, 'Reallocated_Sector_Ct', 4)))
+        self.assertEqual(res['level'], 'ok')
 
     def test_spare_below_threshold_fails_with_nvme_cli_key_names(self):
         res = storage_diag.evaluate_smart_health(
@@ -62,7 +70,7 @@ class SmartHealthTests(unittest.TestCase):
 
     def test_sata_reallocated_pending_uncorrectable_warn(self):
         res = storage_diag.evaluate_smart_health(
-            ata((5, 'Reallocated_Sector_Ct', 12), (197, 'Current_Pending_Sector', 1), (198, 'Offline_Uncorrectable', 0)))
+            ata((5, 'Reallocated_Sector_Ct', 120), (197, 'Current_Pending_Sector', 1), (198, 'Offline_Uncorrectable', 0)))
         self.assertEqual(res['level'], 'warning')
         self.assertEqual(len(res['reasons']), 2)
 
@@ -73,9 +81,9 @@ class SmartHealthTests(unittest.TestCase):
 
     def test_labels_reflect_the_level(self):
         health = {'level': 'failed', 'reasons': ['a', 'b']}
-        self.assertIn('RIESGO DE FALLO', storage_diag.smart_status_label(health))
-        self.assertIn('advertencias', storage_diag.smart_status_label({'level': 'warning', 'reasons': ['x']}))
-        self.assertIn('USB', 'USB') and self.assertIn('Conectado', storage_diag.smart_status_label(None, is_usb=True))
+        self.assertEqual(storage_diag.smart_status_label(health), 'SMART: riesgo de fallo')
+        self.assertEqual(storage_diag.smart_status_label({'level': 'warning', 'reasons': ['x']}), 'SMART: revisar')
+        self.assertEqual(storage_diag.smart_status_label(None, is_usb=True), 'Conectado OK')
 
     def test_nvme_cli_output_gets_a_verdict_and_wear(self):
         # nvme-cli names the wear field percent_used, smartctl percentage_used.
@@ -327,7 +335,7 @@ class RamBenchmarkTests(unittest.TestCase):
         res = ram_benchmark.run_ram_benchmark(chunk_mb=8)
         self.assertTrue(res['success'], res)
         self.assertEqual(res['errors'], 0)
-        self.assertIn('5 patrones', res['message'])
+        self.assertIn('MB OK', res['message'])
 
     def test_corruption_fails_the_check_and_reports_errors(self):
         # The old benchmark always returned success=True, even with errors.
@@ -376,6 +384,80 @@ class OpalSafetyTests(unittest.TestCase):
         for out, expected in ((locked, True), (unlocked, False), ('', False)):
             with mock.patch('opal_diag.sedutil_query', return_value=out):
                 self.assertEqual(opal_diag.check_opal_locked('/dev/nvme0n1'), expected)
+
+
+class BrightnessTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.patch = mock.patch('brightness.BACKLIGHT_DIR', self.tmp.name)
+        self.patch.start()
+
+    def tearDown(self):
+        self.patch.stop()
+        self.tmp.cleanup()
+
+    def _dev(self, name, kind, cur, mx):
+        d = os.path.join(self.tmp.name, name)
+        os.mkdir(d)
+        for f, v in (('type', kind), ('brightness', cur), ('max_brightness', mx)):
+            with open(os.path.join(d, f), 'w') as fh:
+                fh.write(str(v))
+        return d
+
+    def _cur(self, d):
+        with open(os.path.join(d, 'brightness')) as f:
+            return int(f.read())
+
+    def test_unsupported_without_backlight(self):
+        self.assertEqual(brightness.get_brightness(), {'supported': False, 'percent': None})
+        self.assertFalse(brightness.set_brightness(50)['success'])
+
+    def test_percent_is_read_and_set_on_the_native_device(self):
+        fw = self._dev('acpi_video0', 'firmware', 5, 10)
+        raw = self._dev('intel_backlight', 'raw', 480, 960)
+        self.assertEqual(brightness.get_brightness()['percent'], 50)
+        self.assertEqual(brightness.set_brightness(90)['percent'], 90)
+        self.assertEqual(self._cur(raw), 864)
+        self.assertEqual(self._cur(fw), 5)              # the firmware node is left alone
+
+    def test_never_goes_fully_dark_or_above_100(self):
+        raw = self._dev('intel_backlight', 'raw', 100, 1000)
+        brightness.set_brightness(0)
+        self.assertEqual(self._cur(raw), 50)            # 5 % floor
+        brightness.set_brightness(500)
+        self.assertEqual(self._cur(raw), 1000)
+        self.assertFalse(brightness.set_brightness('abc')['success'])
+
+    def test_default_is_applied_once_per_boot(self):
+        raw = self._dev('intel_backlight', 'raw', 100, 1000)
+        with tempfile.TemporaryDirectory() as run:
+            brightness.apply_default_once(run)
+            self.assertEqual(self._cur(raw), 900)
+            brightness.set_brightness(40)               # technician's choice
+            self.assertIsNone(brightness.apply_default_once(run))   # server restart
+            self.assertEqual(self._cur(raw), 400)
+
+
+class AcpiFanTests(unittest.TestCase):
+    def test_acpi_fan_state_is_reported_without_rpm(self):
+        files = {'type': 'Fan', 'cur_state': '2', 'max_state': '4'}
+
+        def fake_open(path, *a, **k):
+            return mock.mock_open(read_data=files[os.path.basename(path)])()
+
+        with mock.patch('thermal.glob.glob', return_value=['/sys/class/thermal/cooling_device3']), \
+             mock.patch('builtins.open', side_effect=fake_open):
+            fans = thermal.read_acpi_fans()
+        self.assertEqual(fans, [{'label': 'Ventilador (ACPI)', 'rpm': None, 'status': 'Activo (nivel 2/4)'}])
+
+    def test_other_cooling_devices_and_off_state(self):
+        with mock.patch('thermal.glob.glob', return_value=['/x/cooling_device0']), \
+             mock.patch('builtins.open', side_effect=lambda p, *a, **k: mock.mock_open(read_data='Processor')()):
+            self.assertEqual(thermal.read_acpi_fans(), [])
+        files = {'type': 'Fan', 'cur_state': '0', 'max_state': '4'}
+        with mock.patch('thermal.glob.glob', return_value=['/x/cooling_device1']), \
+             mock.patch('builtins.open', side_effect=lambda p, *a, **k: mock.mock_open(read_data=files[os.path.basename(p)])()):
+            self.assertEqual(thermal.read_acpi_fans()[0]['status'], 'Apagado (reposo)')
 
 
 if __name__ == '__main__':

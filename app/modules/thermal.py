@@ -161,6 +161,10 @@ def get_thermal_and_fans():
         except Exception:
             pass
 
+    # No RPM sensor (typical on HP business laptops): show the ACPI fan on/off state instead.
+    if not fans:
+        fans.extend(read_acpi_fans())
+
     all_temperatures = cpu_temps + other_temps
 
     return {
@@ -169,6 +173,32 @@ def get_thermal_and_fans():
         'fans': fans,
         'health': _MONITOR.sample(),
     }
+
+
+def read_acpi_fans():
+    """ACPI 'Fan' cooling devices. They give an on/off level, never an RPM value."""
+    found = []
+    for cd in sorted(glob.glob('/sys/class/thermal/cooling_device*')):
+        try:
+            with open(os.path.join(cd, 'type')) as f:
+                if f.read().strip().lower() != 'fan':
+                    continue
+            with open(os.path.join(cd, 'cur_state')) as f:
+                state = int(f.read().strip())
+            max_state = None
+            try:
+                with open(os.path.join(cd, 'max_state')) as f:
+                    max_state = int(f.read().strip())
+            except Exception:
+                pass
+        except Exception:
+            continue
+        if state <= 0:
+            status = 'Apagado (reposo)'
+        else:
+            status = f'Activo (nivel {state}/{max_state})' if max_state else 'Activo'
+        found.append({'label': 'Ventilador (ACPI)', 'rpm': None, 'status': status})
+    return found
 
 
 def read_fan_rpms():

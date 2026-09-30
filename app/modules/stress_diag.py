@@ -352,13 +352,13 @@ class HardwareStressRunner:
 
         passed = not self.aborted and not calc_failure and max_seen_temp < 104.0
         if calc_failure:
-            message = f"CPU con errores de cálculo: {calc_failure}"
+            message = "Errores de cálculo"
         elif not passed:
-            message = "CPU con alta temperatura o abortada"
+            message = "Temperatura alta o abortada"
         elif max_seen_temp:
-            message = f"CPU Estable a {int(round(max_seen_temp))}°C ({num_cpus} hilos, resultados verificados)"
+            message = f"{num_cpus} hilos · máx {int(round(max_seen_temp))} °C"
         else:
-            message = f"CPU Estable ({num_cpus} hilos, resultados verificados, sin sensor de temperatura)"
+            message = f"{num_cpus} hilos · sin sensor de temperatura"
         self.results["cpu"] = {
             "passed": passed,
             "cores_tested": num_cpus,
@@ -459,12 +459,11 @@ class HardwareStressRunner:
         # Whole buffer covered by at least one pattern and no mismatch anywhere.
         passed = not self.aborted and bit_errors == 0 and patterns_done > 0
         if bit_errors:
-            message = f"RAM: {bit_errors} bytes con errores detectados"
+            message = f"{bit_errors} bytes con error"
         elif not passed:
-            message = "RAM abortada o sin patrones completados"
+            message = "Abortada"
         else:
-            full = f" ({passes} pasada(s) completa(s))" if passes else ""
-            message = f"RAM OK: {patterns_done} patrones{full} sobre {alloc_mb} MB, 0 errores"
+            message = f"{alloc_mb} MB · sin errores"
         self.results["ram"] = {
             "passed": passed,
             "allocated_mb": alloc_mb,
@@ -496,7 +495,7 @@ class HardwareStressRunner:
             self.results["ssd"] = {
                 "passed": None, "skipped": True, "drives": [],
                 "duration_sec": round(time.time() - start_comp, 1),
-                "message": "Sin disco interno que probar: omitida",
+                "message": "Sin disco interno",
             }
             return
 
@@ -561,8 +560,8 @@ class HardwareStressRunner:
             "drives": reports,
             "total_mb_read": total_mb,
             "duration_sec": round(time.time() - start_comp, 1),
-            "message": (f"SSD estable: {len(reports)} disco(s), {total_mb} MB leídos sin errores ni relecturas inconsistentes"
-                        if passed else ("SSD abortado" if all_ok else "SSD con errores de lectura o datos inconsistentes")),
+            "message": (f"{len(reports)} disco(s) · {total_mb} MB leídos · sin errores"
+                        if passed else ("Abortada" if all_ok else "Errores de lectura")),
         }
         if passed:
             self.log(f"[SSD] Prueba superada: {total_mb} MB leídos en {len(reports)} disco(s) sin errores.", "success")
@@ -609,12 +608,12 @@ class HardwareStressRunner:
         duration = round(time.time() - start_comp, 1)
 
         if self.aborted:
-            self.results["gpu"] = {"passed": False, "duration_sec": duration, "message": "GPU abortada"}
+            self.results["gpu"] = {"passed": False, "duration_sec": duration, "message": "Abortada"}
             self.log("[GPU] Prueba gráfica finalizada.", "warning")
         elif rep is None:
             self.results["gpu"] = {
                 "passed": None, "skipped": True, "duration_sec": duration,
-                "message": "GPU sin verificar: el navegador no informó el renderizado 3D",
+                "message": "Sin verificar",
             }
             self.log("[GPU] El navegador no reportó resultados de renderizado: prueba sin verificar.", "warning")
         else:
@@ -630,8 +629,7 @@ class HardwareStressRunner:
             passed = not problems
             self.results["gpu"] = {
                 "passed": passed, "duration_sec": duration, "gpu": rep,
-                "message": (f"GPU 3D estable: {rep['avg_fps']} FPS de media (mín {rep['min_fps']}), sin pérdida de contexto"
-                            if passed else "GPU con problemas: " + "; ".join(problems)),
+                "message": f"{rep['avg_fps']} FPS de media" if passed else "; ".join(problems),
             }
             if passed:
                 self.log(f"[GPU] Prueba gráfica superada: {rep['avg_fps']} FPS de media (mín {rep['min_fps']}), {rep['frames']} fotogramas.", "success")

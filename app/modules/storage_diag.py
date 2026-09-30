@@ -124,13 +124,17 @@ def check_drive_read_and_opal(dev_path, is_usb=False, opal_applicable=True):
 
 SMART_UNKNOWN = {'level': 'unknown', 'reasons': []}
 
+# A few reallocated sectors / media errors are normal in a used drive: not reported.
+MINOR_ERRORS_IGNORED = 10
+REALLOCATED_WARN = 20
+
 # NVMe critical_warning bits (NVMe spec, SMART / Health log page).
 _NVME_CRITICAL_BITS = (
-    (0x01, 'espacio de reserva por debajo del umbral'),
+    (0x01, 'reserva baja'),
     (0x02, 'temperatura fuera de rango'),
     (0x04, 'fiabilidad degradada'),
-    (0x08, 'medio en modo solo lectura'),
-    (0x10, 'fallo del respaldo de memoria volátil'),
+    (0x08, 'solo lectura'),
+    (0x10, 'fallo del respaldo volátil'),
 )
 
 
@@ -150,7 +154,7 @@ def evaluate_smart_health(data):
     if overall is not None:
         seen_signal = True
         if overall is False:
-            failed.append('SMART reporta que el disco va a fallar')
+            failed.append('SMART predice fallo')
 
     nvme = data.get('nvme_smart_health_information_log') or {}
     if nvme:
@@ -158,29 +162,29 @@ def evaluate_smart_health(data):
         crit = nvme.get('critical_warning') or 0
         for bit, text in _NVME_CRITICAL_BITS:
             if crit & bit:
-                failed.append(f'Aviso crítico NVMe: {text}')
+                failed.append(f'NVMe: {text}')
         media = nvme.get('media_errors') or 0
-        if media > 0:
-            warnings.append(f'{media} errores de integridad de datos (media errors)')
+        if media >= MINOR_ERRORS_IGNORED:
+            warnings.append(f'{media} errores de integridad')
         spare = nvme.get('available_spare', nvme.get('avail_spare'))
         spare_thr = nvme.get('available_spare_threshold', nvme.get('spare_thresh'))
         if spare is not None and spare_thr is not None and spare < spare_thr:
-            failed.append(f'Reserva disponible ({spare}%) por debajo del umbral ({spare_thr}%)')
+            failed.append(f'Reserva baja ({spare}%)')
         used = nvme.get('percentage_used', nvme.get('percent_used'))
         if used is not None and used >= 100:
-            warnings.append(f'Vida útil consumida al {used}%')
+            warnings.append(f'Vida útil al {used}%')
         elif used is not None and used >= 90:
-            warnings.append(f'Vida útil casi agotada ({used}% consumido)')
+            warnings.append(f'Vida útil al {used}%')
 
     # SATA: attributes whose raw value should stay at 0 on a healthy drive.
     for attr in (data.get('ata_smart_attributes') or {}).get('table') or []:
         seen_signal = True
         raw = (attr.get('raw') or {}).get('value') or 0
         attr_id = attr.get('id')
-        if attr_id == 5 and raw > 0:
+        if attr_id == 5 and raw >= REALLOCATED_WARN:
             warnings.append(f'{raw} sectores reasignados')
         elif attr_id == 197 and raw > 0:
-            warnings.append(f'{raw} sectores pendientes de reasignar')
+            warnings.append(f'{raw} sectores pendientes')
         elif attr_id == 198 and raw > 0:
             warnings.append(f'{raw} sectores incorregibles')
 
@@ -194,15 +198,15 @@ def evaluate_smart_health(data):
 
 
 def smart_status_label(health, is_usb=False):
-    """Text for the drive card. Never claims a healthy drive without SMART data."""
+    """Short card text. Details (reasons) go in a tooltip; only serious problems are flagged."""
     level = (health or SMART_UNKNOWN)['level']
-    if level == 'ok':
-        return 'SMART correcto (sin alertas)'
-    if level == 'warning':
-        return 'SMART con advertencias: ' + '; '.join(health['reasons'][:3])
     if level == 'failed':
-        return 'SMART: RIESGO DE FALLO - ' + '; '.join(health['reasons'][:3])
-    return 'Conectado OK (SMART no disponible)' if is_usb else 'SMART no disponible'
+        return 'SMART: riesgo de fallo'
+    if level == 'warning':
+        return 'SMART: revisar'
+    if level == 'ok':
+        return 'SMART correcto'
+    return 'Conectado OK' if is_usb else 'SMART no disponible'
 
 
 def get_drive_endurance(dev_path, size_gb):
@@ -542,8 +546,6 @@ def _scan_storage():
 
             smart_health = probe['endurance'].get('health')
             smart_status = smart_status_label(smart_health, is_usb)
-            if diag['is_opal_locked']:
-                smart_status += ' | Lectura bloqueada (Posible encriptacion OPAL)'
 
             media = probe.get('drive_class', {}).get('media')
             drive_data = {
@@ -556,6 +558,7 @@ def _scan_storage():
                 'size_gb': size_gb,
                 'smart_status': smart_status,
                 'smart_health': (smart_health or SMART_UNKNOWN)['level'],
+                'smart_detail': '; '.join((smart_health or SMART_UNKNOWN)['reasons'][:3]),
                 'device_read_test': diag['device_read_test'],
                 'nvme_read_test': diag['nvme_read_test'],
                 'is_opal_locked': diag['is_opal_locked'],

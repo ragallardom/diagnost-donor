@@ -79,7 +79,7 @@ def run_cpu_benchmark(iterations=ITERATIONS, timeout=30):
                 'errors': errors,
                 'mops': mops,
                 'elapsed_sec': round(elapsed, 2),
-                'message': f"Error en CPU ({errors} de {cores} hilos con resultado incorrecto o sin respuesta)"
+                'message': f"Error en {errors} de {cores} hilos"
             }
 
         return {
@@ -88,7 +88,7 @@ def run_cpu_benchmark(iterations=ITERATIONS, timeout=30):
             'errors': 0,
             'mops': mops,
             'elapsed_sec': round(elapsed, 2),
-            'message': f"{cores} hilos OK, resultados idénticos ({round(elapsed, 2)}s)"
+            'message': f"{cores} hilos OK · {round(elapsed, 1)} s"
         }
     except Exception as exc:
         return {

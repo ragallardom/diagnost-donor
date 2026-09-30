@@ -45,8 +45,8 @@ def run_ram_benchmark(chunk_mb=256, patterns=PATTERNS, corrupt=None):
             'tested_mb': chunk_mb,
             'speed_gbs': speed_gbs,
             'elapsed_sec': round(elapsed, 3),
-            'message': (f"{chunk_mb} MB verificados con {len(patterns)} patrones ({speed_gbs} GB/s)"
-                        if errors == 0 else f"{errors} bytes con errores en {chunk_mb} MB")
+            'message': (f"{chunk_mb} MB OK · {speed_gbs} GB/s"
+                        if errors == 0 else f"{errors} bytes con error")
         }
     except Exception as e:
         return {

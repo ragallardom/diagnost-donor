@@ -11,6 +11,17 @@ let gpuStressAnimId = null;
 let gpuStressStartTime = null;
 let gpuStressFrameCount = 0;
 
+// Temperature color: normal below 85 °C, amber from 85 °C, red from 95 °C (the cleaning threshold).
+const TEMP_WARN_C = 85;
+const TEMP_HOT_C = 95;
+function stressTempColor(v) {
+  if (v === null || v === undefined) return "";
+  const t = Number(v);
+  if (t >= TEMP_HOT_C) return "var(--danger-red)";
+  if (t >= TEMP_WARN_C) return "var(--warning-amber)";
+  return "";
+}
+
 function openStressModal() {
   const modal = document.getElementById("stress-modal");
   if (modal) modal.style.display = "flex";
@@ -84,8 +95,14 @@ async function pollStressStatus() {
 
     const fmtTemp = v => (v === null || v === undefined) ? "N/D" : `${Math.round(Number(v))} °C`;
 
-    if (tempVal) tempVal.innerText = fmtTemp(data.current_temp_c);
-    if (maxTempVal) maxTempVal.innerText = fmtTemp(data.max_temp_c);
+    if (tempVal) {
+      tempVal.innerText = fmtTemp(data.current_temp_c);
+      tempVal.style.color = stressTempColor(data.current_temp_c);
+    }
+    if (maxTempVal) {
+      maxTempVal.innerText = fmtTemp(data.max_temp_c);
+      maxTempVal.style.color = stressTempColor(data.max_temp_c);
+    }
 
     if (data.is_running) {
       setStressUiState(true);
@@ -141,71 +158,49 @@ function renderStressFinalReport(data) {
   if (livePanel) livePanel.style.display = "none";
   reportPanel.style.display = "block";
 
-  const results = data.results || {};
-  let itemsHtml = "";
+  const names = { cpu: "CPU", ram: "RAM", ssd: "SSD", gpu: "GPU" };
+  const rows = Object.entries(data.results || {}).map(([comp, info]) => {
+    const skipped = info.passed === null || info.passed === undefined;
+    const ok = info.passed === true;
+    const cls = skipped ? "skipped" : (ok ? "ok" : "fail");
+    const label = skipped ? "SIN VERIFICAR" : (ok ? "OK" : "FALLÓ");
+    return `<div class="stress-row ${cls}">
+      <strong>${names[comp] || comp.toUpperCase()}</strong>
+      <span class="stress-row-msg">${escapeHtml(info.message || "")}</span>
+      <span class="stress-badge">${label}</span>
+    </div>`;
+  }).join("");
 
-  const compIcons = {
-    cpu: "Procesador (CPU)",
-    ram: "Memoria RAM",
-    ssd: "Almacenamiento (SSD)",
-    gpu: "Gráficos (GPU 3D)"
-  };
-
-  for (const [comp, info] of Object.entries(results)) {
-    const isOk = info.passed === true;
-    const isSkipped = info.passed === null || info.passed === undefined;
-    const title = compIcons[comp] || comp.toUpperCase();
-    itemsHtml += `
-      <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0.75rem; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 6px; margin-bottom: 0.4rem;">
-        <div>
-          <strong style="color: #ffffff; font-size: 0.85rem;">${title}</strong>
-          <div style="font-size: 0.75rem; color: #94a3b8;">${escapeHtml(info.message || 'Prueba finalizada')}</div>
-        </div>
-        <div>
-          <span class="badge-purple" style="background: ${isSkipped ? 'rgba(245,158,11,0.2)' : (isOk ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)')}; border-color: ${isSkipped ? '#f59e0b' : (isOk ? 'var(--success-green)' : 'var(--danger-red)')}; color: ${isSkipped ? '#fcd34d' : (isOk ? 'var(--success-green)' : '#fca5a5')}; font-size: 0.75rem;">
-            ${isSkipped ? 'SIN VERIFICAR' : (isOk ? 'ESTABLE' : 'FALLÓ')}
-          </span>
-        </div>
-      </div>
-    `;
-  }
-
+  const maxT = data.max_temp_c;
+  const state = data.aborted ? "Interrumpido" : ((data.failed_components || []).length ? "Con fallos" : "Superado");
   reportPanel.innerHTML = `
-    <h4 style="color: #ffffff; margin-bottom: 0.6rem; font-size: 0.95rem; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.4rem;">
-      Informe de Estabilidad y Estrés Térmico
-    </h4>
-    <div style="margin-top: 0.5rem;">
-      ${itemsHtml || '<p style="color: #94a3b8; font-size: 0.8rem;">No se completaron componentes.</p>'}
+    <div class="stress-summary">
+      <span>Temp. máx: <strong style="color: ${stressTempColor(maxT)}">${maxT === null || maxT === undefined ? "N/D" : Math.round(Number(maxT)) + " °C"}</strong></span>
+      <span>Estado: <strong>${state}</strong></span>
     </div>
-    <div style="margin-top: 0.75rem; font-size: 0.8rem; color: #c4b5fd; display: flex; justify-content: space-between;">
-      <span>Temperatura máxima alcanzada: <strong>${data.max_temp_c === null || data.max_temp_c === undefined ? 'N/D' : Math.round(Number(data.max_temp_c)) + ' °C'}</strong></span>
-      <span>Estado: <strong>${data.aborted ? 'Interrumpido' : ((data.failed_components || []).length ? 'Con fallos' : 'Superado')}</strong></span>
-    </div>
+    ${rows || '<p class="stress-empty">Sin resultados.</p>'}
     ${renderThermalAssessment(data.thermal_assessment)}
   `;
 }
 
-// Cooling verdict from the CPU phase: cleaning / thermal paste recommendation.
+// Cooling verdict from the CPU phase: title, one recommendation line and two key numbers.
 function renderThermalAssessment(a) {
   if (!a) return "";
   const titles = {
     ok: "Enfriamiento correcto",
-    watch: "Temperatura elevada: vigilar",
-    clean: "Mantenimiento recomendado: limpieza y cambio de pasta térmica",
-    unknown: "Evaluación térmica no disponible"
+    watch: "Temperatura elevada",
+    clean: "Mantenimiento recomendado",
+    unknown: "Sin datos térmicos"
   };
   const metrics = [];
-  if (a.sustained_avg_c !== null && a.sustained_avg_c !== undefined) metrics.push(`Promedio sostenido: <strong>${a.sustained_avg_c} °C</strong>`);
-  if (a.sustained_hot_pct !== null && a.sustained_hot_pct !== undefined) metrics.push(`Tiempo ≥${Math.round(a.hot_threshold_c)} °C: <strong>${a.sustained_hot_pct}%</strong>`);
-  if (a.throttle && a.throttle.supported) metrics.push(`Throttling térmico: <strong>${a.throttle.events ? `${a.throttle.events} eventos (${(a.throttle.time_ms / 1000).toFixed(1)} s)` : 'No'}</strong>`);
-  if (a.tjmax_c) metrics.push(`TjMax: <strong>${a.tjmax_c} °C</strong>`);
-  if (a.avg_mhz) metrics.push(`Frecuencia sostenida: <strong>${a.avg_mhz} MHz</strong>${a.base_mhz ? ` (base ${a.base_mhz})` : ''}`);
+  if (a.sustained_avg_c !== null && a.sustained_avg_c !== undefined) metrics.push(`Promedio ${a.sustained_avg_c} °C`);
+  if (a.throttle && a.throttle.supported && a.throttle.events) metrics.push(`Throttling ${(a.throttle.time_ms / 1000).toFixed(1)} s`);
+  const reco = a.level === "clean" ? "Limpieza interna y cambio de pasta térmica." : "";
 
   return `
-    <div class="thermal-health level-${a.level}" style="margin-top: 0.75rem;">
-      <div class="th-title"><span>${titles[a.level] || titles.unknown}</span>${a.preliminary ? '<span style="font-weight: 500; color: #94a3b8;">Preliminar</span>' : ''}</div>
-      ${a.recommendation ? `<div class="th-reco">${escapeHtml(a.recommendation)}</div>` : ''}
-      <ul>${(a.reasons || []).map(r => `<li>${escapeHtml(r)}</li>`).join("")}</ul>
+    <div class="thermal-health level-${a.level}" style="margin-top: 0.6rem;" title="${escapeHtml((a.reasons || []).join(" · "))}">
+      <div class="th-title"><span>${titles[a.level] || titles.unknown}</span>${a.preliminary ? '<span class="th-prelim">preliminar</span>' : ''}</div>
+      ${reco ? `<div class="th-reco">${reco}</div>` : ''}
       ${metrics.length ? `<div class="th-meta">${metrics.join(" · ")}</div>` : ''}
     </div>
   `;

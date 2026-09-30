@@ -56,7 +56,7 @@ wget -O Aplicaciones/google-chrome-stable_current_amd64.deb https://dl.google.co
 
 ### Información del sistema
 * Lectura DMI: fabricante, modelo exacto y número de serie (S/N). En Lenovo el part number (`20S0S1EJ00`) no se muestra: el modelo sale del nombre comercial (`ThinkPad T14 Gen 1`) y el part number queda solo como dato interno.
-* Barra superior: marca + modelo corto, p. ej. `Lenovo T14 Gen 5`, `Lenovo X1 Carbon Gen 11` (también los nombres antiguos «6th»/«7th»), `HP EliteBook 845 G8`, `HP EliteBook 840 Aero G8`, `HP ZBook Firefly 14 G8`. Cubierto por `tests/test_model_names.py` (requiere `node`). Los valores de relleno del fabricante (`Default string`, `To be filled by O.E.M.`, `None`…) se descartan: si el S/N del sistema no es válido se usa el de la placa y, si tampoco, se muestra `N/A`.
+* Barra superior: marca + modelo corto, p. ej. `Lenovo T14 Gen 5`, `Lenovo P15 Gen 2`, `Lenovo X1 Carbon Gen 11` (también los nombres antiguos «6th»/«7th»), `HP EliteBook 845 G8`, `HP EliteBook 840 Aero G8`, `HP ZBook Firefly 14 G8`. Cubierto por `tests/test_model_names.py` (requiere `node`). Los valores de relleno del fabricante (`Default string`, `To be filled by O.E.M.`, `None`…) se descartan: si el S/N del sistema no es válido se usa el de la placa y, si tampoco, se muestra `N/A`.
 * TPM: solo se da por 2.0 si el kernel lo confirma (`tpm_version_major` o `/dev/tpmrm0`); un `/dev/tpm0` sin versión se muestra como «versión no confirmada».
 * Placa base, versión y fecha de BIOS.
 * Detección de pantallas externas conectadas por HDMI o DisplayPort (filtrando el panel interno eDP). Si el kernel informa `connected` / `disconnected` esa respuesta es definitiva; solo se recurre a EDID, modos o `enabled` cuando el estado es desconocido.
@@ -65,6 +65,7 @@ wget -O Aplicaciones/google-chrome-stable_current_amd64.deb https://dl.google.co
 
 ### Pantalla (Dead Pixel Test)
 * Modo interactivo a pantalla completa con 9 patrones y colores sólidos (rojo, verde, azul, blanco, negro para backlight bleed, amarillo, magenta, cian y gradiente de grises).
+* **Brillo:** al iniciar se fija en 90 % y hay una barra para subirlo o bajarlo (mínimo 5 %). Solo aparece si el equipo tiene control de brillo (`/sys/class/backlight`).
 * Navegación con clic, flechas o barra espaciadora; salida con `Esc`. Salir con `Esc` solo aprueba la prueba si se llegó al último de los 9 patrones (un píxel muerto puede estar en cualquier color).
 
 ### Batería y alimentación
@@ -79,17 +80,17 @@ wget -O Aplicaciones/google-chrome-stable_current_amd64.deb https://dl.google.co
 
 ### Temperaturas, ventilación y salud térmica
 * Sensores térmicos dedicados de silicio (`coretemp` para Intel, `k10temp`/`zenpower` para AMD, prefiriendo `Tdie` sobre `Tctl`), filtrando sensores periféricos.
-* Lectura de RPM de ventiladores (soporte para Lenovo ThinkPad ACPI, ASUS y HP WMI). Si la BIOS no expone un valor, se indica "Sin lectura"; nunca se muestran valores inventados. El ventilador de ThinkPad no se lista dos veces (hwmon + `/proc/acpi/ibm/fan`).
+* Lectura de RPM de ventiladores (soporte para Lenovo ThinkPad ACPI, ASUS y HP WMI). Si la BIOS no expone un valor, se indica "Sin lectura"; nunca se muestran valores inventados. El ventilador de ThinkPad no se lista dos veces (hwmon + `/proc/acpi/ibm/fan`). Si no hay RPM (habitual en HP EliteBook, cuyo EC no lo expone), se muestra el estado del ventilador ACPI (activo / apagado) cuando existe; se cargan además `hp_wmi`, `dell_smm_hwmon` y `asus_nb_wmi`.
 * **Detección de throttling térmico** (equivalente a *Core/Package Thermal Throttling* de HWiNFO64):
   * Intel: contadores del kernel `/sys/devices/system/cpu/cpuN/thermal_throttle/` (eventos y tiempo acumulado desde el arranque) y, si está disponible, los MSR de estado térmico para detectar throttling y PROCHOT en este momento (lectura permitida con Secure Boot).
   * El límite por potencia (PL1/PL2) no se considera un problema: es el comportamiento normal de una laptop y no se corrige con limpieza.
   * AMD: el kernel no expone contadores de throttling; la evaluación se hace por temperatura.
 * **Recomendación de mantenimiento (limpieza y cambio de pasta térmica):**
-  * *Vista general:* recuadro "Salud térmica" con el estado de throttling y el TjMax. Recomienda mantenimiento si la CPU se mantiene en ≥95 °C durante 60 s, o si está sobre 70 °C en reposo durante 60 s (polvo o pasta seca). Si hubo throttling desde el arranque, sugiere confirmarlo con la prueba de estrés.
+  * *Vista general:* recuadro "Salud térmica" con el estado de throttling y el TjMax. Mensaje corto (título + una línea; el detalle sale al pasar el cursor). Recomienda mantenimiento si la CPU se mantiene en ≥95 °C durante 60 s, o si está sobre 70 °C en reposo durante 60 s (polvo o pasta seca). Si hubo throttling desde el arranque, sugiere confirmarlo con la prueba de estrés.
   * *Prueba de estrés (fase CPU):* se descartan los primeros 30 s de Turbo/PL2, donde los picos altos son normales. Se recomienda limpieza y cambio de pasta si la CPU se mantiene en **≥95 °C durante al menos la mitad de la carga sostenida**, si hay throttling térmico significativo (≥3 s o ≥10 % del tiempo), si la prueba se aborta por temperatura o si el ventilador marca 0 RPM con la CPU sobre 80 °C. Para confirmar un diagnóstico dudoso conviene usar el nivel Media o Profunda.
 
 ### Almacenamiento, diagnóstico LBA, vida útil y desbloqueo SSD
-* **Salud SMART real:** el estado del disco sale de los datos SMART (`smartctl` / `nvme-cli`): estado global, `critical_warning` NVMe, errores de integridad, reserva disponible bajo el umbral, desgaste ≥ 90 % y, en SATA, sectores reasignados / pendientes / incorregibles. Resultado: correcto, con advertencias o riesgo de fallo. Si el disco no expone SMART se indica «SMART no disponible»; nunca se muestra «Salud 100 %» sin datos.
+* **Salud SMART real:** el estado sale de los datos SMART, en una línea corta: «SMART correcto», «SMART: revisar» (advertencia) o «SMART: riesgo de fallo» (grave: estado global, aviso crítico NVMe, reserva baja). Unos pocos sectores reasignados o errores de integridad (< 10 / < 20) se ignoran; el detalle sale al pasar el cursor. Sin SMART: «SMART no disponible».
 * **Evaluación de vida útil y desgaste (Endurance):**
   * Total Escrito acumulado (**TBW - Terabytes Written**) a partir de registros SMART (`data_units_written` en NVMe o `Total_LBAs_Written` en SATA).
   * Ciclos de programación y borrado (**Ciclos P/E**) con cuadro informativo de referencia industrial (0-100: Excelente, 100-300: Muy bueno, 300-600: Uso moderado, >800: Desgaste alto).
@@ -109,12 +110,12 @@ wget -O Aplicaciones/google-chrome-stable_current_amd64.deb https://dl.google.co
 * **Touchpad:** Lienzo para verificar continuidad del cursor y zonas muertas, además de contadores para clic izquierdo y clic derecho / gesto de 2 dedos. El trazo solo cuenta tras recorrer al menos 150 px (un simple clic en el lienzo no basta).
 
 ### Multimedia y conectividad
-* **Cámara web:** Vista previa en vivo y detección de resolución máxima soportada. Se aprueba solo cuando el sensor entrega fotogramas (tamaño de video distinto de cero), no por el mero hecho de existir el dispositivo.
-* **Audio:** Barrido senoidal estéreo (canal izquierdo, derecho y ambos) con control de volumen del sistema.
-* **Micrófono con análisis de onda PCM/RMS:** Medidor de nivel (VU meter) en tiempo real y grabador loopback de 3 segundos con comprobación de amplitud para evitar falsos positivos en entornos sin micrófono o máquinas virtuales.
+* **Cámara web:** vista previa y resolución. Se aprueba solo con la pista activa y una imagen que no sea negra (obturador tapado o sensor muerto se indican).
+* **Audio:** Barrido senoidal estéreo (canal izquierdo, derecho y ambos) con control de volumen del sistema y botón **Suena mal**: marca el checklist en rojo hasta desmarcarlo o reiniciar.
+* **Micrófono:** medidor de nivel y grabación de 3 s con comprobación de amplitud. Conectado no basta: se aprueba solo al detectar señal real; sin señal en 6 s avisa.
 * **Conectividad de red (Wi-Fi y Ethernet):**
   * **Wi-Fi:** Escaneo de redes inalámbricas cercanas (SSID y nivel de señal). El equipo nunca se conecta a ninguna red: la prueba valida la antena y el adaptador mediante el escaneo, sin conexión ni ping. Se muestran las 10 redes más fuertes (un AP por SSID) y se interpretan bien los SSID con `:`.
-  * **Ethernet RJ-45:** Detección de puerto físico (solo NIC reales; se ignoran interfaces virtuales como `dummy0`, `sit0` o `bond0`) y validación del enlace por cable. Una vez probado con éxito, la aprobación en el checklist se mantiene fija de forma persistente aunque el técnico desconecte el cable para continuar con otras pruebas.
+  * **Ethernet RJ-45:** Solo aparece (chip y tarjeta) si hay puerto: integrado o adaptador externo conectado. Ignora interfaces virtuales. Valida el enlace por cable. Una vez probado con éxito, la aprobación en el checklist se mantiene fija de forma persistente aunque el técnico desconecte el cable para continuar con otras pruebas.
   * **Diagnóstico automático de Loopback (TX/RX):** Comprobación inmediata de conectores loopback RJ-45 (pines 1-3 y 2-6 puenteados) mediante tramas de prueba capa 2 (EtherType `0x88B5`) sin necesidad de switch o infraestructura de red externa.
 * **Bluetooth:** Detección del adaptador de radio y su dirección MAC, con su estado real: operativo, apagado, bloqueado por software o bloqueado por hardware (`rfkill`). Un radio bloqueado no aprueba el checklist.
 
@@ -125,6 +126,7 @@ wget -O Aplicaciones/google-chrome-stable_current_amd64.deb https://dl.google.co
   * **SSD:** lecturas directas (`O_DIRECT`) **de solo lectura** sobre los discos internos (nunca el USB de arranque): barrido secuencial de 1 MiB + lecturas aleatorias de 4 KiB con 8 hilos + relectura de zonas fijas comparando su contenido. Informa MB/s, IOPS, latencia máxima y caída de rendimiento (posible throttling del SSD). No se escribe nada: el sistema corre desde RAM (`toram`), por lo que un archivo temporal probaría la memoria y no el disco.
   * **GPU:** el navegador renderiza un shader de *raymarching* a 1280×720 con 4 pasadas por fotograma y reporta fotogramas, FPS medio/mínimo, pérdida de contexto WebGL y errores de shader; el veredicto sale de esas métricas.
 * Duraciones: Rápida (~3.5 min), Media (~9 min) o Profunda (~26 min). La fase de CPU de la prueba rápida dura 75 s: 30 s de Turbo (descartados) y 45 s de carga sostenida.
+* La temperatura máxima se muestra en ámbar desde 85 °C y en rojo desde 95 °C. El informe final es una línea por componente (OK / FALLÓ / SIN VERIFICAR) más el veredicto térmico corto.
 * Protección térmica con tolerancia a picos normales de Turbo Boost (PL2) y parada automática de emergencia si la CPU sostiene >=100°C por más de 4 segundos o supera los 104°C.
 * Informe final con la evaluación del sistema de enfriamiento y la recomendación de limpieza / cambio de pasta térmica (ver *Temperaturas, ventilación y salud térmica*).
 

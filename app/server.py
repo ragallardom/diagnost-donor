@@ -52,6 +52,7 @@ from opal_diag import (
     execute_nvme_crypto_erase,
     validate_target_device,
 )
+from brightness import get_brightness, set_brightness, apply_default_once
 from stress_diag import start_stress_test, stop_stress_test, get_stress_status, report_gpu_result
 
 HOST = '127.0.0.1'
@@ -266,6 +267,7 @@ class DiagnosticHandler(http.server.SimpleHTTPRequestHandler):
             '/api/ram-test': lambda: run_ram_benchmark(256),
             '/api/cpu-test': run_cpu_benchmark,
             '/api/stress/status': get_stress_status,
+            '/api/brightness': get_brightness,
             '/api/bluetooth-psid-status': get_bluetooth_receiver_status,
             '/api/static': lambda: {
                 'system':    get_system_summary(),
@@ -356,6 +358,10 @@ class DiagnosticHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_json({'success': False, 'message': f'Error iniciando estrés: {exc}'}, 400)
             return
 
+        if self.path == '/api/brightness':
+            self.send_json(set_brightness(payload.get('percent')))
+            return
+
         if self.path == '/api/stress/gpu-report':
             try:
                 self.send_json(report_gpu_result(payload))
@@ -440,6 +446,10 @@ class DiagnosticServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 
 def run_server(port=PORT):
+    try:
+        apply_default_once('/run' if os.access('/run', os.W_OK) else tempfile.gettempdir())
+    except Exception:
+        pass
     with DiagnosticServer((HOST, port), DiagnosticHandler) as httpd:
         print(f'==================================================')
         print(f'DIAGNOSTDONOR: http://{HOST}:{port}')

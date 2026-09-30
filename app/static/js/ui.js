@@ -8,9 +8,9 @@
 function updateChecklistProgress() {
   const el = document.getElementById("chk-progress");
   if (!el) return;
-  const pills = document.querySelectorAll(".chk-bar-grid .chk-pill");
-  const passed = document.querySelectorAll(".chk-bar-grid .chk-pill.passed").length;
-  const failed = document.querySelectorAll(".chk-bar-grid .chk-pill.failed").length;
+  const pills = [...document.querySelectorAll(".chk-bar-grid .chk-pill")].filter(p => p.style.display !== "none");
+  const passed = pills.filter(p => p.classList.contains("passed")).length;
+  const failed = pills.filter(p => p.classList.contains("failed")).length;
   el.innerText = `${passed}/${pills.length}`;
   el.classList.toggle("all-passed", pills.length > 0 && passed === pills.length);
   el.classList.toggle("has-failed", failed > 0);
@@ -381,11 +381,11 @@ function updateThermalTab(thermal) {
       fansContainer.innerHTML = thermal.fans.map(f => `
         <div class="sensor-item">
           <span>${f.label}</span>
-          <strong>${f.rpm} RPM (${f.status})</strong>
+          <strong>${(f.rpm === null || f.rpm === undefined) ? f.status : `${f.rpm} RPM (${f.status})`}</strong>
         </div>
       `).join("");
     } else {
-      fansContainer.innerHTML = `<div class="sensor-item"><span>Ventilador</span><strong style="color: #94a3b8;">Sin lectura de RPM (la BIOS no la expone)</strong></div>`;
+      fansContainer.innerHTML = `<div class="sensor-item"><span>Ventilador</span><strong style="color: #94a3b8;">Sin lectura (la BIOS no la expone)</strong></div>`;
     }
   }
 
@@ -414,10 +414,10 @@ function temperatureColor(tempC) {
 }
 
 const THERMAL_LEVEL_TITLES = {
-  ok: "Salud térmica: correcta",
-  watch: "Salud térmica: vigilar",
-  clean: "Salud térmica: requiere mantenimiento",
-  unknown: "Salud térmica: sin datos"
+  ok: "Térmica correcta",
+  watch: "Térmica: vigilar",
+  clean: "Térmica: mantenimiento",
+  unknown: "Térmica: sin datos"
 };
 
 function escapeHtml(text) {
@@ -429,21 +429,19 @@ function updateThermalHealth(health) {
   const box = document.getElementById("thermal-health");
   if (!box || !health) return;
 
-  let throttleText = "No disponible en esta CPU";
-  if (health.throttling_supported) {
-    if (health.throttling_now) throttleText = "ACTIVO ahora";
-    else if (health.throttle_events_since_boot) throttleText = `Sí, ${health.throttle_events_since_boot} eventos desde el arranque`;
-    else throttleText = "No";
-  }
-  const tjmax = health.tjmax_c ? ` · Límite TjMax: ${health.tjmax_c} °C` : "";
+  // Short card: title + one line. Extra detail goes in the tooltip.
+  const detail = [];
+  if (health.tjmax_c) detail.push(`TjMax ${health.tjmax_c} °C`);
+  detail.push(`Mantenimiento si ≥${Math.round(health.hot_threshold_c)} °C sostenido`);
+  if (health.throttling_supported) detail.push(`Throttling desde el arranque: ${health.throttle_events_since_boot || 0}`);
 
   box.className = `thermal-health level-${health.level}`;
   box.style.display = "block";
+  box.title = detail.join(" · ");
   box.innerHTML = `
     <div class="th-title"><span>${THERMAL_LEVEL_TITLES[health.level] || THERMAL_LEVEL_TITLES.unknown}</span></div>
     <div>${escapeHtml(health.message)}</div>
     ${health.prochot_note ? `<div class="th-reco">${escapeHtml(health.prochot_note)}</div>` : ""}
-    <div class="th-meta">Throttling térmico: <strong>${throttleText}</strong>${tjmax} · Umbral de mantenimiento: ≥${Math.round(health.hot_threshold_c)} °C sostenido</div>
   `;
 }
 
@@ -573,7 +571,7 @@ function updateStorageTab(storage) {
             <div class="card-spec-item">
               <span class="spec-label">Salud del disco (SMART)</span>
               <div class="spec-value spec-value-detail" style="color: ${smartColor}; font-weight: 700;">
-                ${smartText}
+                <span title="${escapeHtml(s.smart_detail || '')}">${smartText}</span>
               </div>
             </div>
             ${enduranceHtml}
@@ -752,6 +750,14 @@ function updateWifiTab(wifi) {
     const ethCarrier = document.getElementById("eth-carrier-text");
     const ethLoopback = document.getElementById("eth-loopback-text");
 
+    // The Ethernet test only exists while there is a port (built in, or an external adapter plugged in).
+    const showEth = eth.present || ethernetTestedPassed;
+    const ethChip = document.getElementById("chk-eth");
+    const ethCard = document.getElementById("card-ethernet");
+    if (ethChip) ethChip.style.display = showEth ? "" : "none";
+    if (ethCard) ethCard.style.display = showEth ? "" : "none";
+    updateChecklistProgress();
+
     const isConnected = eth.present && (eth.connected || eth.loopback_verified);
 
     if (isConnected) {
@@ -809,27 +815,8 @@ function updateWifiTab(wifi) {
           ethLoopback.style.color = "var(--text-muted)";
         }
       }
-    } else {
-      if (ethernetTestedPassed) {
-        markCheckpassed("chk-eth", "ETHERNET");
-      } else {
-        markCheckfailed("chk-eth", "ETHERNET");
-        if (ethStatus) {
-          ethStatus.innerText = "No disponible / Sin puerto integrado";
-          ethStatus.style.color = "var(--danger-red)";
-        }
-        if (ethIface) {
-          ethIface.innerHTML = `<code>No integrado</code>`;
-        }
-        if (ethCarrier) {
-          ethCarrier.innerText = "Sin puerto RJ-45";
-          ethCarrier.style.color = "var(--text-muted)";
-        }
-        if (ethLoopback) {
-          ethLoopback.innerText = "No aplicable";
-          ethLoopback.style.color = "var(--text-muted)";
-        }
-      }
+    } else if (ethernetTestedPassed) {
+      markCheckpassed("chk-eth", "ETHERNET");
     }
   }
 }

@@ -1515,3 +1515,38 @@ body.stealth-purple-theme {
 .thermal-health.level-clean .th-title { color: #fca5a5; }
 .thermal-health.level-unknown { border-left-color: #64748b; }
 .thermal-health.level-unknown .th-title { color: #94a3b8; }
+
+/* Stress report: one line per component */
+.stress-summary {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+}
+
+.stress-row {
+  display: grid;
+  grid-template-columns: 3.2rem 1fr auto;
+  gap: 0.6rem;
+  align-items: center;
+  padding: 0.45rem 0.7rem;
+  margin-bottom: 0.3rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 0.85rem;
+}
+
+.stress-row-msg { color: var(--text-muted); font-size: 0.8rem; }
+.stress-badge { font-weight: 800; font-size: 0.75rem; }
+.stress-row.ok .stress-badge { color: var(--success-green); }
+.stress-row.fail { border-color: var(--danger-red); }
+.stress-row.fail .stress-badge { color: var(--danger-red); }
+.stress-row.skipped .stress-badge { color: var(--warning-amber); }
+.th-prelim { font-weight: 500; color: var(--text-muted); }
+
+.btn-audio-bad.active {
+  background-color: rgba(239, 68, 68, 0.2);
+  border-color: var(--danger-red);
+  color: var(--danger-red);
+}

@@ -13,6 +13,9 @@ document.addEventListener("DOMContentLoaded", () => {
   // 2. Request Keyboard Lock API for Escape, F11, Tab capture
   requestKeyboardLock();
 
+  updateChecklistProgress();
+  initBrightness();
+
   // 3. Hardware Data Initial Load & Smart Polling (Fast 1s interval for instant HDMI/Sensor response)
   //    refreshAllData() also auto-launches the baseline CPU, RAM, camera and mic tests.
   refreshAllData(); // Full load once

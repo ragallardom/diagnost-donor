@@ -165,7 +165,7 @@ class CpuLoadTests(unittest.TestCase):
         res = runner.results['cpu']
         self.assertFalse(res['passed'])
         self.assertEqual(res['calc_errors'], 1)
-        self.assertIn('errores de cálculo', res['message'])
+        self.assertIn('cálculo', res['message'])
 
 
 class RamPatternTests(unittest.TestCase):

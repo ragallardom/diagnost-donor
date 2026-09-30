@@ -43,7 +43,7 @@
   <!-- Sticky Checklist QA Bar -->
   <div class="checklist-sticky-bar">
     <span class="chk-label">Checklist QA:</span>
-    <span class="chk-progress" id="chk-progress" title="Pruebas aprobadas">0/13</span>
+    <span class="chk-progress" id="chk-progress" title="Pruebas aprobadas">0/12</span>
     <div class="chk-bar-grid">
       <a href="#sec-system" class="chk-pill" id="chk-cpu">CPU</a>
       <a href="#sec-system" class="chk-pill" id="chk-screen">Pantalla</a>
@@ -57,7 +57,7 @@
       <a href="#sec-av" class="chk-pill" id="chk-audio">Parlantes</a>
       <a href="#sec-av" class="chk-pill" id="chk-mic">Micrófono</a>
       <a href="#sec-wifi" class="chk-pill" id="chk-wifi">Wi-Fi</a>
-      <a href="#sec-wifi" class="chk-pill" id="chk-eth">Ethernet</a>
+      <a href="#sec-wifi" class="chk-pill" id="chk-eth" style="display: none;">Ethernet</a>
     </div>
   </div>
 
@@ -96,6 +96,13 @@
               <button class="btn btn-secondary btn-sm" id="btn-run-cputest" onclick="runCpuQuickTest()"
                 style="flex: 1; white-space: nowrap;" title="Test rápido de estabilidad y velocidad de CPU">Test de
                 CPU</button>
+            </div>
+            <div class="volume-slider-container" id="brightness-row"
+              style="display: none; margin-top: 0.6rem; padding: 0.4rem 0.6rem; background: rgba(0, 0, 0, 0.25); border-radius: 8px; align-items: center; gap: 0.6rem; border: 1px solid var(--border-color);">
+              <label for="brightness-range" style="font-size: 0.8rem; font-weight: 700; color: var(--text-main);">Brillo</label>
+              <input type="range" id="brightness-range" min="5" max="100" value="90"
+                style="flex: 1; accent-color: #a855f7; cursor: pointer;">
+              <span id="brightness-val" style="font-family: var(--font-mono); font-weight: 800; min-width: 3ch; text-align: right;">90%</span>
             </div>
             <div class="test-status-rows">
               <div class="test-status-row"><span class="status-key">Pantalla</span><span id="screen-test-status" style="color: var(--text-muted);">Pendiente</span></div>
@@ -344,6 +351,8 @@
                 derecha</button>
               <button class="btn btn-audio" id="btn-audio-both" onclick="playFrequencySweep('both')">3. Barrido
                 ambos</button>
+              <button class="btn btn-audio btn-audio-bad" id="btn-audio-bad" onclick="toggleSpeakerBad()"
+                title="Marcar si el sonido sale distorsionado o con ruido">Suena mal</button>
             </div>
             <p class="audio-status-text" id="audio-status-text">Prueba requerida: 0/3 completados</p>
           </div>
@@ -376,7 +385,7 @@
 
       <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.25rem;">
         <!-- CARD 1: ETHERNET RJ45 -->
-        <div class="card" id="card-ethernet">
+        <div class="card" id="card-ethernet" style="display: none;">
           <div class="card-header">
             <span class="spec-label">Puerto Ethernet (RJ-45)</span>
           </div>
@@ -691,7 +700,7 @@
             </div>
             <div class="stress-telemetry-pill">
               <span>Temp: <strong id="stress-temp-val">-- °C</strong></span>
-              <span style="margin-left: 0.75rem;">Temp Max: <strong id="stress-max-temp-val" style="color: #fca5a5;">--
+              <span style="margin-left: 0.75rem;">Temp Max: <strong id="stress-max-temp-val">--
                   °C</strong></span>
             </div>
           </div>
