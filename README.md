@@ -13,7 +13,7 @@ Está orientado a pruebas rápidas de hardware en equipos corporativos (Lenovo T
 Si no deseas compilar la imagen desde el código fuente, puedes descargar la ISO lista para grabar:
 
 * **Descargar imagen ISO:** [Carpeta en Google Drive](https://drive.google.com/drive/folders/1OyvIwNIlQrwrBk6csGnisaWAhYtO8NJI?usp=sharing)
-* Versión de referencia: `diagnost-donor_1.1.23_linux-live.iso`
+* Versión de referencia: `diagnost-donor_1.1.24_linux-live.iso`
 
 ---
 
