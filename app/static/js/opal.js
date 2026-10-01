@@ -21,6 +21,31 @@ if (typeof window !== "undefined" && "BarcodeDetector" in window) {
   }
 }
 
+// QR decoder libraries (~490 KB) are only needed by the Opal PSID scanner:
+// load them on demand instead of blocking the first paint of the app.
+const QR_LIBRARIES = ["vendor/jsQR.min.js", "vendor/zxing.min.js"];
+let qrLibrariesPromise = null;
+
+function loadQrLibraries() {
+  if (!qrLibrariesPromise) {
+    qrLibrariesPromise = Promise.all(QR_LIBRARIES.map(src => new Promise(resolve => {
+      const script = document.createElement("script");
+      script.src = src;
+      script.onload = () => resolve(true);
+      script.onerror = () => { console.warn("No se pudo cargar", src); resolve(false); };
+      document.head.appendChild(script);
+    })));
+  }
+  return qrLibrariesPromise;
+}
+
+// Preload once the browser is idle so opening the Opal modal stays instant.
+window.addEventListener("load", () => {
+  const preload = () => loadQrLibraries();
+  if ("requestIdleCallback" in window) requestIdleCallback(preload, { timeout: 8000 });
+  else setTimeout(preload, 4000);
+});
+
 // Lazy ZXing Reader factory
 function getZxingReader() {
   if (!zxingReaderInstance && typeof window !== "undefined" && window.ZXing) {
@@ -194,6 +219,7 @@ function openOpalModalWithDrive(targetDevice) {
 // 3. HIGH-SPEED QR SCANNER PIPELINE (PHONE SCREENS & WEBCAMS)
 // ─────────────────────────────────────────────────────────────────
 async function startQrScanner() {
+  await loadQrLibraries();
   const video = document.getElementById("qr-scanner-video");
   const overlay = document.getElementById("qr-scan-status-overlay");
   const reticle = document.getElementById("qr-target-reticle");

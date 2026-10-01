@@ -19,6 +19,8 @@ import threading
 import time
 from contextlib import contextmanager
 
+from opal_diag import classify_drive, sedutil_query, get_nvme_crypto_capabilities, invalidate_opal_cache
+
 # Serializes destructive disk operations (PSID revert, crypto erase) among themselves.
 DISK_LOCK = threading.Lock()
 # Serializes drive scans; also guards _disk_op_active.
@@ -35,6 +37,7 @@ _last_snapshot = {'internal': [], 'usb': [], 'all': []}
 
 def invalidate_storage_cache(dev_name=None):
     """Drop cached probe results for one device (e.g. 'nvme0n1') or for all."""
+    invalidate_opal_cache()
     with _probe_cache_lock:
         if dev_name is None:
             _probe_cache.clear()
@@ -42,10 +45,14 @@ def invalidate_storage_cache(dev_name=None):
             _probe_cache.pop(os.path.basename(dev_name), None)
 
 
-def check_drive_read_and_opal(dev_path, is_usb=False):
+def check_drive_read_and_opal(dev_path, is_usb=False, opal_applicable=True):
     """
     Executes non-destructive low-level sector read tests (Device Read Test & NVMe Read Test).
     Detects if the drive blocks reads due to TCG Opal / hardware encryption.
+
+    Opal checks (sedutil query and "read blocked -> Opal" inference) only run
+    when opal_applicable (SSDs); on pen drives / HDDs a read failure is just a
+    read failure.
     """
     device_read = "PASSED"
     nvme_read = "PASSED"
@@ -97,19 +104,15 @@ def check_drive_read_and_opal(dev_path, is_usb=False):
         except Exception:
             nvme_read = "FAILED"
 
-    # 3. sedutil query if available
-    try:
-        res_sed = subprocess.run(['sedutil-cli', '--query', dev_path], capture_output=True, text=True, timeout=2)
-        if res_sed.returncode == 0 and res_sed.stdout:
-            stdout_lower = res_sed.stdout.lower()
-            if 'locked = y' in stdout_lower or 'lockingenabled = y' in stdout_lower:
-                is_opal = True
-    except Exception:
-        pass
+    # 3. sedutil query (SSDs only; shared cache with the Opal drive listing)
+    if opal_applicable:
+        stdout_lower = sedutil_query(dev_path)
+        if 'locked = y' in stdout_lower or 'lockingenabled = y' in stdout_lower:
+            is_opal = True
 
-    # If one or both low-level read tests fail on internal drive, or sedutil confirms lock
-    if (device_read == "FAILED" or nvme_read == "FAILED") or is_opal:
-        is_opal = True
+        # If one or both low-level read tests fail on an SSD, or sedutil confirms lock
+        if (device_read == "FAILED" or nvme_read == "FAILED") or is_opal:
+            is_opal = True
 
     return {
         'device_read_test': device_read,
@@ -117,6 +120,93 @@ def check_drive_read_and_opal(dev_path, is_usb=False):
         'is_opal_locked': is_opal,
         'read_diagnostic': 'Posible bloqueo por cifrado TCG Opal' if is_opal else ('PASSED' if (device_read == 'PASSED' and nvme_read == 'PASSED') else 'FAILED')
     }
+
+
+SMART_UNKNOWN = {'level': 'unknown', 'reasons': []}
+
+# A few reallocated sectors / media errors are normal in a used drive: not reported.
+MINOR_ERRORS_IGNORED = 10
+REALLOCATED_WARN = 20
+
+# NVMe critical_warning bits (NVMe spec, SMART / Health log page).
+_NVME_CRITICAL_BITS = (
+    (0x01, 'reserva baja'),
+    (0x02, 'temperatura fuera de rango'),
+    (0x04, 'fiabilidad degradada'),
+    (0x08, 'solo lectura'),
+    (0x10, 'fallo del respaldo volátil'),
+)
+
+
+def evaluate_smart_health(data):
+    """Real SMART verdict from smartctl JSON (or nvme-cli) data.
+
+    Returns {'level': 'ok'|'warning'|'failed'|'unknown', 'reasons': [...]}.
+    'unknown' means the drive exposed nothing usable: never reported as healthy.
+    """
+    if not data or data.get('_parsed_text'):
+        return dict(SMART_UNKNOWN, reasons=[])
+
+    failed, warnings = [], []
+    seen_signal = False
+
+    overall = (data.get('smart_status') or {}).get('passed')
+    if overall is not None:
+        seen_signal = True
+        if overall is False:
+            failed.append('SMART predice fallo')
+
+    nvme = data.get('nvme_smart_health_information_log') or {}
+    if nvme:
+        seen_signal = True
+        crit = nvme.get('critical_warning') or 0
+        for bit, text in _NVME_CRITICAL_BITS:
+            if crit & bit:
+                failed.append(f'NVMe: {text}')
+        media = nvme.get('media_errors') or 0
+        if media >= MINOR_ERRORS_IGNORED:
+            warnings.append(f'{media} errores de integridad')
+        spare = nvme.get('available_spare', nvme.get('avail_spare'))
+        spare_thr = nvme.get('available_spare_threshold', nvme.get('spare_thresh'))
+        if spare is not None and spare_thr is not None and spare < spare_thr:
+            failed.append(f'Reserva baja ({spare}%)')
+        used = nvme.get('percentage_used', nvme.get('percent_used'))
+        if used is not None and used >= 100:
+            warnings.append(f'Vida útil al {used}%')
+        elif used is not None and used >= 90:
+            warnings.append(f'Vida útil al {used}%')
+
+    # SATA: attributes whose raw value should stay at 0 on a healthy drive.
+    for attr in (data.get('ata_smart_attributes') or {}).get('table') or []:
+        seen_signal = True
+        raw = (attr.get('raw') or {}).get('value') or 0
+        attr_id = attr.get('id')
+        if attr_id == 5 and raw >= REALLOCATED_WARN:
+            warnings.append(f'{raw} sectores reasignados')
+        elif attr_id == 197 and raw > 0:
+            warnings.append(f'{raw} sectores pendientes')
+        elif attr_id == 198 and raw > 0:
+            warnings.append(f'{raw} sectores incorregibles')
+
+    if not seen_signal:
+        return dict(SMART_UNKNOWN, reasons=[])
+    if failed:
+        return {'level': 'failed', 'reasons': failed + warnings}
+    if warnings:
+        return {'level': 'warning', 'reasons': warnings}
+    return {'level': 'ok', 'reasons': []}
+
+
+def smart_status_label(health, is_usb=False):
+    """Short card text. Details (reasons) go in a tooltip; only serious problems are flagged."""
+    level = (health or SMART_UNKNOWN)['level']
+    if level == 'failed':
+        return 'SMART: riesgo de fallo'
+    if level == 'warning':
+        return 'SMART: revisar'
+    if level == 'ok':
+        return 'SMART correcto'
+    return 'Conectado OK' if is_usb else 'SMART no disponible'
 
 
 def get_drive_endurance(dev_path, size_gb):
@@ -137,6 +227,7 @@ def get_drive_endurance(dev_path, size_gb):
         'power_on_hours': None,
         'percentage_used': None,
         'health_remaining_pct': None,
+        'health': dict(SMART_UNKNOWN, reasons=[]),
     }
 
     # Check if mechanical HDD
@@ -210,6 +301,8 @@ def get_drive_endurance(dev_path, size_gb):
     if not data:
         return endurance
 
+    endurance['health'] = evaluate_smart_health(data)
+
     tbw_tb = None
     poh = None
     percentage_used = None
@@ -228,7 +321,8 @@ def get_drive_endurance(dev_path, size_gb):
                 # NVMe spec: 1 unit = 1000 * 512 bytes = 512,000 bytes
                 tbw_tb = round((units_written * 512000) / (10**12), 2)
             poh = nvme_log.get('power_on_hours')
-            percentage_used = nvme_log.get('percentage_used')
+            # smartctl calls it percentage_used, nvme-cli percent_used.
+            percentage_used = nvme_log.get('percentage_used', nvme_log.get('percent_used'))
 
         # SATA SMART attributes
         ata_tables = (data.get('ata_smart_attributes') or {}).get('table') or []
@@ -294,7 +388,9 @@ def get_drive_endurance(dev_path, size_gb):
 
 def _probe_drive(dev_name, dev_file_path, is_usb, size_gb):
     """Run the expensive per-drive probes (read tests, SMART, crypto caps)."""
-    diag = check_drive_read_and_opal(dev_file_path, is_usb=is_usb)
+    drive_class = classify_drive(dev_file_path)
+    diag = check_drive_read_and_opal(dev_file_path, is_usb=is_usb,
+                                     opal_applicable=drive_class['opal_applicable'])
     endurance = get_drive_endurance(dev_file_path, size_gb)
 
     # Check NVMe Sanitize / Crypto Erase capability
@@ -302,7 +398,6 @@ def _probe_drive(dev_name, dev_file_path, is_usb, size_gb):
     crypto_label = "Solo Formato Estandar"
     if 'nvme' in dev_name:
         try:
-            from opal_diag import get_nvme_crypto_capabilities
             caps = get_nvme_crypto_capabilities(dev_file_path)
             crypto_supported = caps.get('crypto_supported', False)
             crypto_label = caps.get('status_label', 'Compatible con Borrado Criptografico (NVMe Sanitize / SES-2)')
@@ -312,10 +407,21 @@ def _probe_drive(dev_name, dev_file_path, is_usb, size_gb):
 
     return {
         'diag': diag,
+        'drive_class': drive_class,
         'endurance': endurance,
         'crypto_supported': crypto_supported,
         'crypto_label': crypto_label,
     }
+
+
+def _drive_type_label(dev_name, is_usb, media):
+    if 'nvme' in dev_name:
+        return 'M.2 NVMe SSD'
+    if is_usb:
+        return {'ssd': 'SSD externo USB', 'hdd': 'Disco duro externo USB'}.get(media, 'Unidad USB Externa')
+    if dev_name.startswith('mmcblk'):
+        return 'eMMC / Tarjeta SD'
+    return {'ssd': 'SATA SSD', 'hdd': 'Disco duro HDD'}.get(media, 'SATA SSD / HDD')
 
 
 def _get_cached_probe(dev_name, dev_file_path, is_usb, size_gb, model):
@@ -352,14 +458,37 @@ def exclusive_disk_access():
             invalidate_storage_cache()
 
 
+_has_snapshot = False
+
+
+def get_storage_snapshot():
+    """Non-blocking variant for the 1 s telemetry poll.
+
+    If a scan is already running (e.g. the slow first scan at startup), return
+    the last completed snapshot instead of waiting, or None if there is none yet.
+    """
+    if not _SCAN_LOCK.acquire(blocking=False):
+        return _last_snapshot if _has_snapshot else None
+    try:
+        return _scan_locked()
+    finally:
+        _SCAN_LOCK.release()
+
+
 def get_storage_info():
-    global _last_snapshot
     with _SCAN_LOCK:
-        # A destructive disk operation is in progress: don't probe the drives.
-        if _disk_op_active:
-            return _last_snapshot
-        _last_snapshot = _scan_storage()
+        return _scan_locked()
+
+
+def _scan_locked():
+    """Scan the drives; caller holds _SCAN_LOCK."""
+    global _last_snapshot, _has_snapshot
+    # A destructive disk operation is in progress: don't probe the drives.
+    if _disk_op_active:
         return _last_snapshot
+    _last_snapshot = _scan_storage()
+    _has_snapshot = True
+    return _last_snapshot
 
 
 def _scan_storage():
@@ -415,17 +544,21 @@ def _scan_storage():
             probe = _get_cached_probe(dev_name, dev_file_path, is_usb, size_gb, model)
             diag = probe['diag']
 
-            smart_status = 'Salud 100% (Sin errores)' if not is_usb else 'Conectado OK'
-            if diag['is_opal_locked']:
-                smart_status = 'SMART OK | Lectura bloqueada (Posible encriptacion OPAL)'
+            smart_health = probe['endurance'].get('health')
+            smart_status = smart_status_label(smart_health, is_usb)
 
+            media = probe.get('drive_class', {}).get('media')
             drive_data = {
                 'device': dev_file_path,
                 'model': model,
                 'is_usb': is_usb,
-                'type': 'M.2 NVMe SSD' if 'nvme' in dev_name else ('Unidad USB Externa' if is_usb else 'SATA SSD / HDD'),
+                'type': _drive_type_label(dev_name, is_usb, media),
+                'media': media,
+                'opal_applicable': probe.get('drive_class', {}).get('opal_applicable', False),
                 'size_gb': size_gb,
                 'smart_status': smart_status,
+                'smart_health': (smart_health or SMART_UNKNOWN)['level'],
+                'smart_detail': '; '.join((smart_health or SMART_UNKNOWN)['reasons'][:3]),
                 'device_read_test': diag['device_read_test'],
                 'nvme_read_test': diag['nvme_read_test'],
                 'is_opal_locked': diag['is_opal_locked'],

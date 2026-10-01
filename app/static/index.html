@@ -7,8 +7,6 @@
   <meta name="diag-session-token" content="__DIAG_SESSION_TOKEN__">
   <title>DIAGNOSTDONOR - Hardware QA Suite</title>
   <link rel="stylesheet" href="style.css">
-  <script src="vendor/jsQR.min.js"></script>
-  <script src="vendor/zxing.min.js"></script>
 </head>
 
 <body class="stealth-purple-theme">
@@ -19,7 +17,7 @@
       <div class="status-dot online"></div>
       <h1>DIAGNOST-DONOR</h1>
       <span
-        style="font-size: 0.75rem; color: #ffffff; font-weight: 500; font-family: var(--font-mono); margin-left: 2px;">v1.1.15</span>
+        style="font-size: 0.75rem; color: #ffffff; font-weight: 500; font-family: var(--font-mono); margin-left: 2px;">v1.1.24</span>
       <span class="badge-purple" id="header-serial">S/N: Detectando...</span>
     </div>
     <div class="system-quick-stats">
@@ -30,6 +28,8 @@
           id="quick-charge-status">--</span>)</div>
       <button class="btn btn-stress" onclick="openStressModal()" title="Prueba de estrés y estabilidad">Prueba de
         estrés</button>
+      <button class="btn btn-secondary" onclick="openReportModal()"
+        title="Informe del equipo: enviar por Bluetooth">Informe</button>
       <button class="btn btn-icon-refresh" onclick="refreshAllData()" title="Actualizar datos">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
           stroke-linecap="round" stroke-linejoin="round">
@@ -45,6 +45,7 @@
   <!-- Sticky Checklist QA Bar -->
   <div class="checklist-sticky-bar">
     <span class="chk-label">Checklist QA:</span>
+    <span class="chk-progress" id="chk-progress" title="Pruebas aprobadas">0/12</span>
     <div class="chk-bar-grid">
       <a href="#sec-system" class="chk-pill" id="chk-cpu">CPU</a>
       <a href="#sec-system" class="chk-pill" id="chk-screen">Pantalla</a>
@@ -58,7 +59,7 @@
       <a href="#sec-av" class="chk-pill" id="chk-audio">Parlantes</a>
       <a href="#sec-av" class="chk-pill" id="chk-mic">Micrófono</a>
       <a href="#sec-wifi" class="chk-pill" id="chk-wifi">Wi-Fi</a>
-      <a href="#sec-wifi" class="chk-pill" id="chk-eth">Ethernet</a>
+      <a href="#sec-wifi" class="chk-pill" id="chk-eth" style="display: none;">Ethernet</a>
     </div>
   </div>
 
@@ -98,10 +99,20 @@
                 style="flex: 1; white-space: nowrap;" title="Test rápido de estabilidad y velocidad de CPU">Test de
                 CPU</button>
             </div>
-            <div
-              style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.4rem; font-size: 0.73rem; font-family: var(--font-mono);">
-              <span id="screen-test-status" style="color: var(--text-muted);">Pantalla: Pendiente</span>
-              <span id="cpu-test-status" style="color: #a855f7;">Analizando CPU...</span>
+            <div class="volume-slider-container" id="brightness-row"
+              style="display: none; margin-top: 0.6rem; padding: 0.4rem 0.6rem; background: rgba(0, 0, 0, 0.25); border-radius: 8px; align-items: center; gap: 0.6rem; border: 1px solid var(--border-color);">
+              <label for="brightness-range"
+                style="font-size: 0.8rem; font-weight: 700; color: var(--text-main);">Brillo</label>
+              <input type="range" id="brightness-range" min="5" max="100" value="90"
+                style="flex: 1; accent-color: #a855f7; cursor: pointer;">
+              <span id="brightness-val"
+                style="font-family: var(--font-mono); font-weight: 800; min-width: 3ch; text-align: right;">90%</span>
+            </div>
+            <div class="test-status-rows">
+              <div class="test-status-row"><span class="status-key">Pantalla</span><span id="screen-test-status"
+                  style="color: var(--text-muted);">Pendiente</span></div>
+              <div class="test-status-row"><span class="status-key">CPU</span><span id="cpu-test-status"
+                  style="color: var(--violet-accent);">Analizando CPU...</span></div>
             </div>
           </div>
         </div>
@@ -154,9 +165,11 @@
                 <span class="info-tip-wrap">
                   <span class="info-tip-icon">i</span>
                   <span class="info-tip-box">
-                    <strong style="color: #f1f5f9; display: block; margin-bottom: 0.25rem;">Ciclos de carga (Batería):</strong>
+                    <strong style="color: #f1f5f9; display: block; margin-bottom: 0.25rem;">Ciclos de carga
+                      (Batería):</strong>
                     <span style="display: block; color: #94a3b8; margin-bottom: 0.35rem; font-size: 0.72rem;">
-                      Un ciclo representa una descarga y recarga completa (100% acumulado). Mide el desgaste y envejecimiento real de las celdas químicas.
+                      Un ciclo representa una descarga y recarga completa (100% acumulado). Mide el desgaste y
+                      envejecimiento real de las celdas químicas.
                     </span>
                     <strong style="color: #e2e8f0; display: block; margin-bottom: 0.2rem;">Estado según ciclos:</strong>
                     • 0 a 300: Excelente (sin degradación apreciable)<br>
@@ -205,7 +218,8 @@
             </div>
           </div>
           <div style="margin-top: 0.75rem;">
-            <button class="btn btn-secondary btn-sm" onclick="openOpalModal()">Desbloquear disco (TCG Opal / PSID)</button>
+            <button class="btn btn-secondary btn-sm" onclick="openOpalModal()">Desbloquear disco (TCG Opal /
+              PSID)</button>
           </div>
         </div>
 
@@ -261,6 +275,7 @@
         <div class="stat-box">Teclas presionadas: <strong id="key-count">0</strong> / 78 total</div>
         <div class="stat-box">Última tecla: <strong id="last-key-code">Ninguna</strong></div>
         <button class="btn btn-secondary" onclick="resetKeyboardTest()">Reiniciar matriz</button>
+        <button class="btn btn-secondary" onclick="toggleManualFail('chk-keyboard')" title="Marcar el teclado como fallido (otro clic lo quita)">Marcar fallo</button>
       </div>
 
       <div class="keyboard-wrapper">
@@ -378,14 +393,15 @@
 
       <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.25rem;">
         <!-- CARD 1: ETHERNET RJ45 -->
-        <div class="card" id="card-ethernet">
+        <div class="card" id="card-ethernet" style="display: none;">
           <div class="card-header">
             <span class="spec-label">Puerto Ethernet (RJ-45)</span>
           </div>
           <div id="ethernet-details" style="display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.5rem;">
             <div class="card-spec-item">
               <span class="spec-label">Estado del puerto</span>
-              <div class="spec-value spec-value-detail" id="eth-status-text" style="color: var(--text-muted);">Comprobando...</div>
+              <div class="spec-value spec-value-detail" id="eth-status-text" style="color: var(--text-muted);">
+                Comprobando...</div>
             </div>
             <div class="card-spec-item">
               <span class="spec-label">Interfaz de red</span>
@@ -569,7 +585,8 @@
           </div>
           <div class="card-spec-item">
             <span class="spec-label">Acción a realizar</span>
-            <div class="spec-value spec-value-detail" style="color: #e2e8f0;" id="opal-confirm-action-text">Reversión PSID + Creación tabla GPT limpia
+            <div class="spec-value spec-value-detail" style="color: #e2e8f0;" id="opal-confirm-action-text">Reversión
+              PSID + Creación tabla GPT limpia
             </div>
           </div>
         </div>
@@ -603,6 +620,33 @@
   </div>
 
   <!-- MODAL DE PRUEBAS DE ESTRÉS (CPU, RAM DDR3/4/5, SSD, GPU) -->
+  <div id="report-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-content" style="max-width: 560px;">
+      <div class="modal-header">
+        <h3>Informe del equipo</h3>
+        <button class="modal-close-btn" onclick="closeReportModal()">&times;</button>
+      </div>
+      <div class="modal-body" style="display: flex; flex-direction: column; gap: 0.7rem;">
+        <textarea id="report-comments" rows="3" maxlength="500" placeholder="Comentarios (opcional)"
+          style="width: 100%; background: var(--bg-dark); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 6px; padding: 0.5rem; font: inherit; resize: vertical;"></textarea>
+        <div style="display: flex; gap: 0.6rem;">
+          <select id="report-format" title="Formato del archivo"
+            style="background: var(--bg-dark); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 6px; padding: 0 0.6rem; font: inherit;">
+            <option value="pdf">PDF</option>
+            <option value="html">HTML</option>
+          </select>
+          <button class="btn btn-block" id="btn-report-send" onclick="findPhonesForReport()">Enviar por
+            Bluetooth</button>
+          <button class="btn btn-secondary" onclick="toggleReportPreview()">Ver</button>
+        </div>
+        <div id="report-status" style="font-size: 0.85rem; min-height: 1.2rem;"></div>
+        <div id="report-devices" style="display: flex; flex-wrap: wrap; gap: 0.5rem;"></div>
+        <iframe id="report-preview" sandbox=""
+          style="display: none; width: 100%; height: 320px; border: 1px solid var(--border-color); border-radius: 6px; background: #fff;"></iframe>
+      </div>
+    </div>
+  </div>
+
   <div id="stress-modal" class="modal-overlay" style="display: none;">
     <div class="modal-content modal-stress-content">
       <div class="modal-header">
@@ -661,21 +705,21 @@
                 <span class="level-dot dot-green"></span>
                 <div>
                   <strong>Rápida</strong>
-                  <span class="sub">~2.5 min</span>
+                  <span class="sub">~3.5 min</span>
                 </div>
               </button>
               <button type="button" class="btn-level-pill" id="btn-lvl-medium" onclick="selectStressLevel('medium')">
                 <span class="level-dot dot-yellow"></span>
                 <div>
                   <strong>Media</strong>
-                  <span class="sub">~6 min</span>
+                  <span class="sub">~9 min</span>
                 </div>
               </button>
               <button type="button" class="btn-level-pill" id="btn-lvl-deep" onclick="selectStressLevel('deep')">
                 <span class="level-dot dot-red"></span>
                 <div>
                   <strong>Profunda</strong>
-                  <span class="sub">~15 min</span>
+                  <span class="sub">~26 min</span>
                 </div>
               </button>
             </div>
@@ -693,7 +737,7 @@
             </div>
             <div class="stress-telemetry-pill">
               <span>Temp: <strong id="stress-temp-val">-- °C</strong></span>
-              <span style="margin-left: 0.75rem;">Temp Max: <strong id="stress-max-temp-val" style="color: #fca5a5;">--
+              <span style="margin-left: 0.75rem;">Temp Max: <strong id="stress-max-temp-val">--
                   °C</strong></span>
             </div>
           </div>
@@ -750,6 +794,7 @@
   <script src="js/media.js"></script>
   <script src="js/opal.js"></script>
   <script src="js/stress.js"></script>
+  <script src="js/report.js"></script>
   <script src="js/api.js"></script>
   <script src="js/main.js"></script>
 </body>

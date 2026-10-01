@@ -21,6 +21,23 @@ _latest_psid = None
 _latest_timestamp = 0
 _latest_source = None
 
+def _bluetooth_rfkill():
+    """(soft_blocked, hard_blocked) of the Bluetooth radio, or (None, None) if unknown."""
+    for rf in glob.glob('/sys/class/rfkill/rfkill*'):
+        try:
+            with open(os.path.join(rf, 'type')) as f:
+                if f.read().strip() != 'bluetooth':
+                    continue
+            with open(os.path.join(rf, 'soft')) as f:
+                soft = f.read().strip() == '1'
+            with open(os.path.join(rf, 'hard')) as f:
+                hard = f.read().strip() == '1'
+            return soft, hard
+        except Exception:
+            continue
+    return None, None
+
+
 def get_bluetooth_info():
     bt_paths = sorted(glob.glob('/sys/class/bluetooth/hci*'))
     present = len(bt_paths) > 0
@@ -56,14 +73,25 @@ def get_bluetooth_info():
     except Exception:
         pass
 
+    soft_blocked, hard_blocked = _bluetooth_rfkill()
     if present:
-        status = "Operativo y alimentado" if is_powered else "Adaptador detectado (Apagado)"
+        if hard_blocked:
+            status = "Bloqueado por hardware (interruptor o BIOS)"
+        elif soft_blocked:
+            status = "Bloqueado por software (rfkill)"
+        elif is_powered:
+            status = "Operativo y alimentado"
+        else:
+            status = "Adaptador detectado (Apagado)"
 
     return {
         'present': present,
         'name': adapter_name,
         'mac_address': mac_address,
-        'is_powered': is_powered or present,
+        # Real radio state: an adapter that is present but off is not "powered".
+        'is_powered': is_powered and not hard_blocked and not soft_blocked,
+        'soft_blocked': soft_blocked,
+        'hard_blocked': hard_blocked,
         'status': status
     }
 

@@ -26,7 +26,23 @@ def get_sysfs_value(filepath, default=None, is_int=False):
         pass
     return default
 
+# The 1 s telemetry poll must not spawn `upower` every time: cycles and thresholds
+# barely change and the charging state is also read from sysfs.
+UPOWER_TTL_SEC = 5.0
+_UPOWER_CACHE = {}
+
+
 def get_upower_info(bat_name):
+    hit = _UPOWER_CACHE.get(bat_name)
+    now = time.monotonic()
+    if hit and now - hit[0] < UPOWER_TTL_SEC:
+        return hit[1]
+    value = _query_upower(bat_name)
+    _UPOWER_CACHE[bat_name] = (now, value)
+    return value
+
+
+def _query_upower(bat_name):
     cycles = None
     upower_status = None
     end_threshold = None
@@ -149,7 +165,7 @@ def get_battery_info():
 
         # 3. Determine status_es and errors (clean status without redundant percentage)
         if is_charging:
-            status_es = "Cargando"
+            status_es = "Conectado cargando"
         elif is_full:
             if ac_online:
                 status_es = "Carga Completa"
@@ -161,12 +177,12 @@ def get_battery_info():
             # AC is plugged in, not charging yet, not full, not in conservation
             if up_status_lower == 'pending-charge' or ac_duration < 10.0:
                 # Negotiation / handshake grace period (first 10 seconds of plugging in)
-                status_es = "Cargador Conectado (Iniciando carga...)"
+                status_es = "Conectado, iniciando carga"
             elif capacity < 90 and (status_lower in ['not charging', 'discharging'] or up_status_lower in ['not-charging', 'discharging']):
                 # Sustained non-charging state after 10+ seconds
                 has_charge_error = True
                 error_msg = "CARGADOR CONECTADO PERO SIN CARGA (Posible fallo de puerto, cargador insuficiente o umbral BIOS)"
-                status_es = "Conectado / Batería No Carga"
+                status_es = "Conectado, sin carga"
             else:
                 status_es = "Cargador Conectado"
         else:
@@ -199,7 +215,8 @@ def get_battery_info():
         model_name = get_sysfs_value(os.path.join(bat_path, 'model_name'), 'Standard Battery')
         manufacturer = get_sysfs_value(os.path.join(bat_path, 'manufacturer'), 'OEM')
 
-        health_percent = 100.0
+        # None (not 100) when the battery does not report both capacities: never invent a health value.
+        health_percent = None
         if energy_full_design and energy_full and energy_full_design > 0:
             health_percent = round((energy_full / energy_full_design) * 100.0, 1)
 
@@ -245,7 +262,7 @@ def get_battery_info():
             'is_conservation': False,
             'charge_threshold': None,
             'capacity_percent': 100,
-            'health_percent': 100.0,
+            'health_percent': None,
             'design_wh': 0.0,
             'full_wh': 0.0,
             'current_wh': 0.0,

@@ -1,43 +1,76 @@
 #!/usr/bin/env python3
 """
 CPU Fast Stability & Performance Benchmark Module
-Spawns parallel threads across all available CPU cores to execute floating-point and integer
-arithmetic tests, verifying ALU/FPU stability and calculating execution speed.
+Runs the same floating-point kernel on every logical CPU at the same time (one
+process per CPU, because threads would be serialized by the GIL and only ever load
+one core) and checks that all of them return bit-identical results. A core with a
+faulty FPU / cache / unstable clock produces a different value and is reported.
 """
 
 import os
+import subprocess
+import sys
 import time
-import math
-import concurrent.futures
+from collections import Counter
 
-def _worker_benchmark(iterations):
-    val = 1.0
-    for i in range(1, iterations):
-        val = math.sin(val) * math.cos(i * 0.001) + math.sqrt(i + val * val)
-    return val
+ITERATIONS = 1_200_000  # ~0.5 s per core on a current laptop CPU
 
-def run_cpu_benchmark():
-    cores = os.cpu_count() or 4
-    iterations_per_chunk = 40_000
-    
-    start_time = time.time()
-    errors = 0
-    total_ops = 0
+_WORKER_SRC = r'''
+import math, sys, time
+n = int(sys.argv[1])
+t0 = time.perf_counter()
+val = 1.0
+for i in range(1, n):
+    val = math.sin(val) * math.cos(i * 0.001) + math.sqrt(i + val * val)
+print(val.hex(), time.perf_counter() - t0)
+'''
 
+
+def _parse_worker(stdout):
+    """(result_hex, compute_seconds) from a worker's output, or (None, None)."""
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=cores) as executor:
-            futures = [executor.submit(_worker_benchmark, iterations_per_chunk) for _ in range(cores)]
-            for fut in concurrent.futures.as_completed(futures):
-                res = fut.result()
-                if math.isnan(res) or math.isinf(res):
-                    errors += 1
-                total_ops += iterations_per_chunk * 10
+        hex_val, secs = stdout.split()
+        value = float.fromhex(hex_val)
+        if value != value or value in (float('inf'), float('-inf')):
+            return None, None
+        return hex_val, float(secs)
+    except Exception:
+        return None, None
 
-        elapsed = time.time() - start_time
-        if elapsed == 0:
-            elapsed = 0.001
 
-        mops = round((total_ops / 1_000_000.0) / elapsed, 1)
+def run_cpu_benchmark(iterations=ITERATIONS, timeout=30):
+    cores = os.cpu_count() or 4
+    start_time = time.time()
+    try:
+        procs = [subprocess.Popen([sys.executable, '-c', _WORKER_SRC, str(iterations)],
+                                  stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+                 for _ in range(cores)]
+        results, times, bad = [], [], 0
+        for p in procs:
+            try:
+                out, _ = p.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.communicate()
+                bad += 1
+                continue
+            hex_val, secs = _parse_worker(out) if p.returncode == 0 else (None, None)
+            if hex_val is None:
+                bad += 1
+            else:
+                results.append(hex_val)
+                times.append(secs)
+
+        # The kernel is deterministic: every core must return exactly the same bits.
+        errors = bad
+        if results:
+            expected, _count = Counter(results).most_common(1)[0]
+            errors += sum(1 for r in results if r != expected)
+
+        elapsed = max(time.time() - start_time, 0.001)
+        busy = max(times) if times else elapsed
+        total_ops = iterations * 10 * len(results)
+        mops = round((total_ops / 1_000_000.0) / max(busy, 0.001), 1)
 
         if errors > 0:
             return {
@@ -46,7 +79,7 @@ def run_cpu_benchmark():
                 'errors': errors,
                 'mops': mops,
                 'elapsed_sec': round(elapsed, 2),
-                'message': f"Error en CPU ({errors} fallos en hilos)"
+                'message': f"Error en {errors} de {cores} hilos"
             }
 
         return {
@@ -55,7 +88,7 @@ def run_cpu_benchmark():
             'errors': 0,
             'mops': mops,
             'elapsed_sec': round(elapsed, 2),
-            'message': f"{cores} hilos OK ({round(elapsed, 2)}s)"
+            'message': f"{cores} hilos OK · {round(elapsed, 1)} s"
         }
     except Exception as exc:
         return {
@@ -66,6 +99,7 @@ def run_cpu_benchmark():
             'elapsed_sec': 0,
             'message': f"Fallo en test CPU: {str(exc)}"
         }
+
 
 if __name__ == '__main__':
     import json

@@ -5,7 +5,7 @@
   --bg-card-hover: #19192e;
   --border-color: #241e42;
   --text-main: #f1f5f9;
-  --text-muted: #8b5cf6;
+  --text-muted: #94a3b8; /* secondary text: 7.3:1 on cards (violet is kept for accents) */
   --primary-violet: #7c3aed;
   --violet-hover: #6d28d9;
   --violet-accent: #a855f7;
@@ -50,7 +50,7 @@ body.stealth-purple-theme {
   background-color: var(--bg-dark);
   color: var(--text-main);
   font-family: var(--font-sans);
-  min-height: 100vh;
+  min-height: calc(100vh / var(--ui-zoom, 1));
   display: flex;
   flex-direction: column;
 }
@@ -160,9 +160,9 @@ body.stealth-purple-theme {
   background-color: var(--bg-card);
   color: var(--text-muted);
   border: 1px solid var(--border-color);
-  padding: 0.35rem 0.85rem;
+  padding: 0.35rem 0.7rem;
   border-radius: 6px;
-  font-size: 0.8rem;
+  font-size: 0.85rem;
   font-weight: 700;
   text-decoration: none;
   display: flex;
@@ -175,6 +175,66 @@ body.stealth-purple-theme {
   background-color: var(--bg-card-hover);
   color: var(--text-main);
   border-color: var(--primary-violet);
+}
+
+/* Status is shown with an icon as well as a color (color-blind safe): ○ pending, ✓ passed, ✗ failed. */
+.chk-pill::before {
+  content: "○";
+  font-weight: 400;
+  opacity: 0.7;
+}
+
+.chk-pill.passed::before {
+  content: "✓";
+  font-weight: 800;
+  opacity: 1;
+}
+
+.chk-pill.failed::before {
+  content: "✗";
+  font-weight: 800;
+  opacity: 1;
+}
+
+.chk-progress {
+  font-family: var(--font-mono);
+  font-weight: 800;
+  font-size: 0.9rem;
+  color: var(--text-main);
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 0.25rem 0.55rem;
+}
+
+.chk-progress.all-passed {
+  color: var(--success-green);
+  border-color: var(--success-green);
+}
+
+.chk-progress.has-failed {
+  color: var(--danger-red);
+  border-color: var(--danger-red);
+}
+
+.test-status-rows {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+}
+
+.test-status-row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+}
+
+.test-status-row .status-key {
+  min-width: 4.2rem;
+  font-weight: 700;
+  color: var(--text-main);
 }
 
 .chk-pill.passed {
@@ -904,8 +964,8 @@ body.stealth-purple-theme {
   position: fixed;
   top: 0;
   left: 0;
-  width: 100vw;
-  height: 100vh;
+  width: calc(100vw / var(--ui-zoom, 1));
+  height: calc(100vh / var(--ui-zoom, 1));
   background-color: rgba(7, 7, 14, 0.85);
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
@@ -938,10 +998,10 @@ body.stealth-purple-theme {
   left: 0;
   right: 0;
   bottom: 0;
-  width: 100vw;
-  height: 100vh;
-  max-width: 100vw;
-  max-height: 100vh;
+  width: calc(100vw / var(--ui-zoom, 1));
+  height: calc(100vh / var(--ui-zoom, 1));
+  max-width: calc(100vw / var(--ui-zoom, 1));
+  max-height: calc(100vh / var(--ui-zoom, 1));
   margin: 0;
   padding: 0;
   overflow: hidden;
@@ -1455,3 +1515,49 @@ body.stealth-purple-theme {
 .thermal-health.level-clean .th-title { color: #fca5a5; }
 .thermal-health.level-unknown { border-left-color: #64748b; }
 .thermal-health.level-unknown .th-title { color: #94a3b8; }
+
+/* Stress report: one line per component */
+.stress-summary {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+}
+
+.stress-row {
+  display: grid;
+  grid-template-columns: 3.2rem 1fr auto;
+  gap: 0.6rem;
+  align-items: center;
+  padding: 0.45rem 0.7rem;
+  margin-bottom: 0.3rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 0.85rem;
+}
+
+.stress-row-msg { color: var(--text-muted); font-size: 0.8rem; }
+.stress-badge { font-weight: 800; font-size: 0.75rem; }
+.stress-row.ok .stress-badge { color: var(--success-green); }
+.stress-row.fail { border-color: var(--danger-red); }
+.stress-row.fail .stress-badge { color: var(--danger-red); }
+.stress-row.skipped .stress-badge { color: var(--warning-amber); }
+.th-prelim { font-weight: 500; color: var(--text-muted); }
+
+
+.chk-fail-btn {
+  background: none;
+  border: 0;
+  color: inherit;
+  opacity: 0.35;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0 0 0 0.25rem;
+  line-height: 1;
+}
+
+.chk-pill:hover .chk-fail-btn { opacity: 0.8; }
+.chk-fail-btn:hover { opacity: 1; color: var(--danger-red); }
+.chk-pill.manual .chk-fail-btn { opacity: 1; }

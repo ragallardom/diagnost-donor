@@ -24,6 +24,31 @@ function apiPost(url, payload) {
   return fetch(url, options);
 }
 
+// Scales the whole UI to the screen. The layout was designed for ~1600x900: on smaller screens
+// (1366x768, 1280x720...) everything looked too big and crowded, so it is shrunk proportionally.
+const UI_ZOOM_MIN = 0.72;
+
+// Small screens shrink the UI (design size ~1600x900, never above 1.0 up to Full HD);
+// 2K / 4K screens enlarge it so it does not look tiny.
+function computeUiZoom(width, height) {
+  const big = Math.min(width / 1920, height / 1080);
+  if (big > 1) return Math.round(Math.min(1.5, big) * 100) / 100;
+  const small = Math.min(width / 1600, height / 900);
+  return Math.round(Math.max(UI_ZOOM_MIN, Math.min(1, small)) * 100) / 100;
+}
+
+function applyUiScale() {
+  // screen.* does not change with the page zoom, so this cannot feed back on itself.
+  const w = window.screen.width || window.innerWidth;
+  const h = window.screen.height || window.innerHeight;
+  const z = computeUiZoom(w, h);
+  document.documentElement.style.zoom = z;
+  document.documentElement.style.setProperty("--ui-zoom", z);
+}
+
+applyUiScale();
+window.addEventListener("resize", applyUiScale);
+
 (() => {
   // Dropping a file or link on the window would navigate to it.
   for (const type of ["dragover", "drop"]) {

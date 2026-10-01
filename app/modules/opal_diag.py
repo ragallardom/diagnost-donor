@@ -14,6 +14,7 @@ import subprocess
 import re
 import json
 import time
+import threading
 
 # Whole-disk device nodes that destructive operations may target.
 TARGET_DEVICE_RE = re.compile(r"^/dev/(nvme\d+(n\d+)?|sd[a-z]+|mmcblk\d+)$")
@@ -46,6 +47,102 @@ def get_boot_medium_disks():
     return disks
 
 
+# ── Drive classification & shared query cache ─────────────────────────────
+# Opal/SED queries only make sense on SSDs: internal NVMe / SATA SSDs and
+# external USB SSDs. Pen drives, HDDs and eMMC/SD cards are never queried.
+
+CACHE_TTL_SEC = 60
+_cache = {}
+_cache_lock = threading.Lock()
+
+
+def _cached(key, fn):
+    """Memoize fn() for CACHE_TTL_SEC so storage and drive listings share results."""
+    now = time.monotonic()
+    with _cache_lock:
+        hit = _cache.get(key)
+        if hit and now - hit[0] < CACHE_TTL_SEC:
+            return hit[1]
+    value = fn()
+    with _cache_lock:
+        _cache[key] = (time.monotonic(), value)
+    return value
+
+
+def invalidate_opal_cache():
+    with _cache_lock:
+        _cache.clear()
+
+
+def _read_sys_int(path):
+    try:
+        with open(path, 'r') as f:
+            return int(f.read().strip())
+    except Exception:
+        return None
+
+
+def _smart_rotation_rate(device):
+    """Rotation rate reported by SMART (0 = SSD, >0 = HDD RPM), or None if unknown.
+
+    Used for USB drives: SSD enclosures usually answer SMART through their
+    SATA bridge, pen drives do not.
+    """
+    try:
+        res = subprocess.run(['smartctl', '-i', '-j', device], capture_output=True, text=True, timeout=3)
+        data = json.loads(res.stdout) if res.stdout else {}
+        rate = data.get('rotation_rate')
+        return int(rate) if rate is not None else None
+    except Exception:
+        return None
+
+
+def classify_drive(device):
+    """Classify a disk and decide whether Opal/SED queries apply to it.
+
+    Returns {'media': 'nvme'|'ssd'|'hdd'|'flash'|'mmc'|'unknown',
+             'is_usb': bool, 'opal_applicable': bool}.
+    """
+    name = os.path.basename(device)
+    if name.startswith('nvme'):
+        return {'media': 'nvme', 'is_usb': False, 'opal_applicable': True}
+    if name.startswith('mmcblk'):
+        return {'media': 'mmc', 'is_usb': False, 'opal_applicable': False}
+    if not name.startswith('sd'):
+        return {'media': 'unknown', 'is_usb': False, 'opal_applicable': False}
+
+    sys_dir = f'/sys/block/{name}'
+    size = _read_sys_int(f'{sys_dir}/size')
+
+    def compute():
+        is_usb = 'usb' in os.path.realpath(sys_dir)
+        rotational = _read_sys_int(f'{sys_dir}/queue/rotational')
+        removable = _read_sys_int(f'{sys_dir}/removable')
+        if not is_usb:
+            media = 'hdd' if rotational == 1 else 'ssd'
+        elif removable == 1:
+            media = 'flash'                      # pen drive / card reader
+        elif rotational == 0:
+            media = 'ssd'                        # USB SSD reporting non-rotational
+        else:
+            rate = _smart_rotation_rate(device)
+            media = 'ssd' if rate == 0 else ('hdd' if rate else 'flash')
+        return {'media': media, 'is_usb': is_usb, 'opal_applicable': media == 'ssd'}
+
+    return _cached(('classify', name, size), compute)
+
+
+def sedutil_query(device):
+    """Cached `sedutil-cli --query` output (lowercase), '' if unavailable."""
+    def run():
+        try:
+            res = subprocess.run(['sedutil-cli', '--query', device], capture_output=True, text=True, timeout=3)
+            return res.stdout.lower() if res.returncode == 0 and res.stdout else ''
+        except Exception:
+            return ''
+    return _cached(('sedutil', device), run)
+
+
 def validate_target_device(device):
     """Check a device path is a whole disk that may be wiped. Returns (ok, reason)."""
     if not isinstance(device, str) or not TARGET_DEVICE_RE.fullmatch(device):
@@ -54,6 +151,9 @@ def validate_target_device(device):
         return False, f'Error: El dispositivo objetivo {device} no existe en el sistema o fue desconectado.'
     if os.path.basename(device) in get_boot_medium_disks():
         return False, f'Error: {device} es el pendrive de arranque de DIAGNOST-DONOR y no puede borrarse.'
+    if not classify_drive(device)['opal_applicable']:
+        return False, (f'Error: {device} no es un SSD (pendrive, disco duro o tarjeta). '
+                       'El desbloqueo Opal solo aplica a SSD internos o externos.')
     return True, ''
 
 
@@ -70,7 +170,8 @@ def list_target_drives():
                 line = line.strip()
                 if line.startswith('/dev/'):
                     dev_path = line.split()[0]
-                    if dev_path not in seen_devices and os.path.exists(dev_path):
+                    if (dev_path not in seen_devices and os.path.exists(dev_path)
+                            and classify_drive(dev_path)['opal_applicable']):
                         seen_devices.add(dev_path)
                         info = _get_device_info(dev_path)
                         info['is_sedutil_detected'] = True
@@ -80,13 +181,13 @@ def list_target_drives():
 
     # 2. NVMe Drives scan fallback / complement
     for path in sorted(glob.glob('/dev/nvme*n1')):
-        if path not in seen_devices and os.path.exists(path):
+        if path not in seen_devices and os.path.exists(path) and classify_drive(path)['opal_applicable']:
             seen_devices.add(path)
             drives.append(_get_device_info(path))
 
     # 3. SATA / USB Drives scan fallback / complement
     for path in sorted(glob.glob('/dev/sd[a-z]')):
-        if path not in seen_devices and os.path.exists(path):
+        if path not in seen_devices and os.path.exists(path) and classify_drive(path)['opal_applicable']:
             seen_devices.add(path)
             drives.append(_get_device_info(path))
 
@@ -95,6 +196,11 @@ def list_target_drives():
 import shutil
 
 def get_nvme_crypto_capabilities(device_path):
+    """Cached NVMe Sanitize / Crypto Erase capabilities (shared by storage and Opal listings)."""
+    return _cached(('nvme_caps', device_path), lambda: _query_nvme_crypto_capabilities(device_path))
+
+
+def _query_nvme_crypto_capabilities(device_path):
     """
     Queries NVMe controller capabilities for Sanitize and Format (SES=2 Crypto Erase).
     Non-destructive query.
@@ -218,27 +324,33 @@ def execute_nvme_crypto_erase(device):
         except Exception as exc:
             log_entries.append(f"[AVISO] Format SES=1 fallo: {exc}")
 
-    # Step 4: Storage Controller Rescan & Partition Wipe
-    log_entries.append(f"[3/5] Refrescando bus de almacenamiento y generando tabla GPT limpia...")
-    sys_name = os.path.basename(device)
-    rescan_path = f"/sys/block/{sys_name}/device/rescan"
-    if os.path.exists(rescan_path):
+    # Step 4: Storage Controller Rescan & Partition Wipe.
+    # Only after an erase actually succeeded: if every erase command was rejected the
+    # drive still holds its data, and wiping its signatures / partition table anyway
+    # would damage it while reporting a failure.
+    if erase_success:
+        log_entries.append("[3/5] Refrescando bus de almacenamiento y generando tabla GPT limpia...")
+        sys_name = os.path.basename(device)
+        rescan_path = f"/sys/block/{sys_name}/device/rescan"
+        if os.path.exists(rescan_path):
+            try:
+                with open(rescan_path, 'w') as f:
+                    f.write("1\n")
+            except Exception:
+                pass
+
+        time.sleep(1)
+
         try:
-            with open(rescan_path, 'w') as f:
-                f.write("1\n")
-        except Exception:
-            pass
-
-    time.sleep(1)
-
-    try:
-        subprocess.run(['partprobe', device], capture_output=True, timeout=5)
-        subprocess.run(['udevadm', 'settle', '--timeout=3'], capture_output=True, timeout=5)
-        subprocess.run(['wipefs', '-af', device], capture_output=True, text=True, timeout=10)
-        subprocess.run(['parted', '-s', device, 'mklabel', 'gpt'], capture_output=True, text=True, timeout=10)
-        subprocess.run(['partprobe', device], capture_output=True, timeout=5)
-    except Exception as exc:
-        log_entries.append(f"[AVISO] wipefs/parted fallo: {exc}")
+            subprocess.run(['partprobe', device], capture_output=True, timeout=5)
+            subprocess.run(['udevadm', 'settle', '--timeout=3'], capture_output=True, timeout=5)
+            subprocess.run(['wipefs', '-af', device], capture_output=True, text=True, timeout=10)
+            subprocess.run(['parted', '-s', device, 'mklabel', 'gpt'], capture_output=True, text=True, timeout=10)
+            subprocess.run(['partprobe', device], capture_output=True, timeout=5)
+        except Exception as exc:
+            log_entries.append(f"[AVISO] wipefs/parted fallo: {exc}")
+    else:
+        log_entries.append("[3/5] Ningún comando de borrado fue aceptado: no se toca la tabla de particiones ni las firmas.")
 
     # Step 5: Non-destructive verification read test
     log_entries.append(f"[4/5] Verificando desbloqueo mediante lectura directa de sectores LBA...")
@@ -253,7 +365,8 @@ def execute_nvme_crypto_erase(device):
     except Exception as e:
         log_entries.append(f"Aviso lectura LBA: {e}")
 
-    if read_ok or erase_success:
+    # Success means an erase really ran. A readable drive alone proves nothing was erased.
+    if erase_success:
         log_entries.append("[5/5] Operacion completada exitosamente. Disco desbloqueado y listo para instalar el SO.")
         return {
             'success': True,
@@ -269,9 +382,11 @@ def execute_nvme_crypto_erase(device):
         }
     else:
         log_entries.append("[ERROR] El controlador rechazo los comandos de borrado criptografico directo.")
+        if read_ok:
+            log_entries.append("El disco es legible, pero no se borró nada: los datos siguen intactos.")
         return {
             'success': False,
-            'message': f'El controlador rechazo el borrado directo. El firmware del disco {device} requiere desbloqueo mediante PSID Revert.',
+            'message': f'El controlador rechazo el borrado directo. El firmware del disco {device} requiere desbloqueo mediante PSID Revert. No se modificó ningún dato.',
             'log': "\n".join(log_entries)
         }
 
@@ -342,13 +457,10 @@ def _get_device_info(dev_path):
 
 def check_opal_locked(device):
     try:
-        res = subprocess.run(['sedutil-cli', '--query', device], capture_output=True, text=True, timeout=3)
-        if res.returncode == 0:
-            stdout = res.stdout.lower()
-            if 'locked = yes' in stdout or 'mbr enabled = yes' in stdout or 'locking feature = yes' in stdout:
-                return True
-            if 'tper function = yes' in stdout or 'locking function = yes' in stdout:
-                return True
+        stdout = sedutil_query(device)
+        # Real `sedutil-cli --query` output: "Locked = Y, LockingEnabled = Y, ..." (Y/N, not yes/no).
+        if stdout and re.search(r'\blocked\s*=\s*y\b', stdout):
+            return True
     except Exception:
         pass
     return False

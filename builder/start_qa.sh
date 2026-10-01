@@ -70,26 +70,26 @@ if [ "$IS_LIVE" -eq 1 ] && { [ "$SB_OK" -eq 0 ] || [ "$TPM_OK" -eq 0 ]; }; then
     else
         SHOW_ERR="${SHOW_ERR}   [FAIL] MODULO TPM 2.0   : DESACTIVADO (Requerido)\n"
     fi
-    SHOW_ERR="${SHOW_ERR}\n------------------------------------------------------------------------\n [REQUISITO BLOQUEANTE]: El sistema de diagnostico NO cargara\n    hasta que actives SECURE BOOT y TPM 2.0 en la BIOS.\n========================================================================\n\n Reiniciando el equipo en 10 segundos..."
+    SHOW_ERR="${SHOW_ERR}\n------------------------------------------------------------------------\n [REQUISITO BLOQUEANTE]: El sistema de diagnostico NO cargara\n    hasta que actives SECURE BOOT y TPM 2.0 en la BIOS.\n========================================================================\n\n Reiniciando el equipo en 30 segundos..."
 
     printf "$SHOW_ERR\n"
 
     # Sin terminal visible en el kiosk: mostrar el aviso como diálogo gráfico
     # (zenity; xmessage como respaldo). El reinicio no depende del diálogo:
-    # ocurre a los 10 segundos aunque el técnico lo cierre.
+    # ocurre a los 30 segundos aunque el técnico lo cierre.
     ALERT_SHOWN=0
     if command -v zenity >/dev/null 2>&1; then
-        zenity --error --no-wrap --timeout=10 --title="DIAGNOSTDONOR - Seguridad en BIOS" \
+        zenity --error --no-wrap --timeout=30 --title="DIAGNOSTDONOR - Seguridad en BIOS" \
             --text="<tt>$(printf "$SHOW_ERR" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')</tt>" 2>/dev/null &
         ALERT_PID=$!
         sleep 0.5
         kill -0 "$ALERT_PID" 2>/dev/null && ALERT_SHOWN=1
     fi
     if [ "$ALERT_SHOWN" -eq 0 ] && command -v xmessage >/dev/null 2>&1; then
-        printf "$SHOW_ERR\n" | xmessage -center -timeout 10 -file - 2>/dev/null &
+        printf "$SHOW_ERR\n" | xmessage -center -timeout 30 -file - 2>/dev/null &
     fi
 
-    sleep 9.5
+    sleep 29.5
     reboot -f 2>/dev/null || { echo 1 > /proc/sys/kernel/sysrq && echo b > /proc/sysrq-trigger; }
     exit 1
 fi
@@ -116,7 +116,7 @@ fi
 echo "[INICIO] Iniciando Suite de Diagnostico de Hardware (ThinkPad & EliteBook QA)..."
 
 # Preparar módulos de drivers Wi-Fi modernos, GPU y puertos Type-C/HDMI ThinkPad T14 Gen 5/6 en paralelo
-for mod in msr coretemp k10temp thinkpad_acpi intel_vsec ucsi_acpi typec typec_displayport thunderbolt xe i915 amdgpu drm_kms_helper iwlwifi iwlmvm ath12k_pci ath12k ath11k_pci ath11k rtw89_8852be rtw89_8852ce rtw89_8922ae rtw89_pci rtw89_core mt7921e mt7922e mt7925e rtw88_8822ce; do
+for mod in msr coretemp k10temp thinkpad_acpi hp_wmi dell_smm_hwmon asus_nb_wmi intel_vsec ucsi_acpi typec typec_displayport thunderbolt xe i915 amdgpu drm_kms_helper iwlwifi iwlmvm ath12k_pci ath12k ath11k_pci ath11k rtw89_8852be rtw89_8852ce rtw89_8922ae rtw89_pci rtw89_core mt7921e mt7922e mt7925e rtw88_8822ce; do
   modprobe "$mod" 2>/dev/null &
 done
 

@@ -134,19 +134,30 @@ function initTouchpadCanvas() {
     };
   }
 
+  // Movement is verified by the distance actually traced: one click on the canvas is not a stroke.
+  const MIN_STROKE_PX = 150;
+  let strokeLength = 0;
+  let lastPos = null;
+  window.addEventListener("touchpad-reset", () => { strokeLength = 0; lastPos = null; });
+
   function startDraw(e) {
     isDrawing = true;
-    touchpadDrawn = true;
     const pos = getPos(e);
+    lastPos = pos;
     ctx.beginPath();
     ctx.moveTo(pos.x, pos.y);
     if (log) log.innerText = `Touchpad: Trazo en (${Math.round(pos.x)}, ${Math.round(pos.y)})`;
-    checkTouchpadComplete();
   }
 
   function draw(e) {
     if (!isDrawing) return;
     const pos = getPos(e);
+    if (lastPos) strokeLength += Math.hypot(pos.x - lastPos.x, pos.y - lastPos.y);
+    lastPos = pos;
+    if (strokeLength >= MIN_STROKE_PX && !touchpadDrawn) {
+      touchpadDrawn = true;
+      checkTouchpadComplete();
+    }
     ctx.lineTo(pos.x, pos.y);
     ctx.strokeStyle = "#a855f7";
     ctx.lineWidth = 3;
@@ -168,6 +179,7 @@ function initTouchpadCanvas() {
   canvas.addEventListener("mousedown", startDraw);
   canvas.addEventListener("mousemove", draw);
   canvas.addEventListener("mouseup", stopDraw);
+  canvas.addEventListener("mouseleave", stopDraw);
 
   canvas.addEventListener("touchstart", startDraw);
   canvas.addEventListener("touchmove", draw);
@@ -192,6 +204,7 @@ function resetTouchpadTest() {
   touchpadLeftClicked = false;
   touchpadRightClicked = false;
   touchpadDrawn = false;
+  window.dispatchEvent(new Event("touchpad-reset"));
   leftClickCount = 0;
   rightClickCount = 0;
   lastRightClickTime = 0;

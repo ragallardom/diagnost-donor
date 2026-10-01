@@ -38,7 +38,7 @@ from battery import get_battery_info
 from thermal import get_thermal_and_fans
 from system_info import get_system_summary
 from wifi_diag import get_wifi_status
-from storage_diag import get_storage_info, exclusive_disk_access
+from storage_diag import get_storage_info, get_storage_snapshot, exclusive_disk_access
 from bluetooth_diag import (
     get_bluetooth_info,
     start_bluetooth_receiver,
@@ -52,7 +52,9 @@ from opal_diag import (
     execute_nvme_crypto_erase,
     validate_target_device,
 )
-from stress_diag import start_stress_test, stop_stress_test, get_stress_status
+import bluetooth_send
+from brightness import get_brightness, set_brightness, apply_default_once
+from stress_diag import start_stress_test, stop_stress_test, get_stress_status, report_gpu_result
 
 HOST = '127.0.0.1'
 PORT = 8080
@@ -169,6 +171,7 @@ _BT_RECEIVER_LOCK = threading.Lock()
 start_bluetooth_receiver = _serialized(start_bluetooth_receiver, _BT_RECEIVER_LOCK)
 stop_bluetooth_receiver = _serialized(stop_bluetooth_receiver, _BT_RECEIVER_LOCK)
 
+_BT_SEND_LOCK = threading.Lock()   # one scan / send at a time
 _POWER_LOCK = threading.Lock()
 
 
@@ -266,6 +269,7 @@ class DiagnosticHandler(http.server.SimpleHTTPRequestHandler):
             '/api/ram-test': lambda: run_ram_benchmark(256),
             '/api/cpu-test': run_cpu_benchmark,
             '/api/stress/status': get_stress_status,
+            '/api/brightness': get_brightness,
             '/api/bluetooth-psid-status': get_bluetooth_receiver_status,
             '/api/static': lambda: {
                 'system':    get_system_summary(),
@@ -278,7 +282,7 @@ class DiagnosticHandler(http.server.SimpleHTTPRequestHandler):
                 'battery':   get_battery_info(),
                 'thermal':   get_thermal_and_fans(),
                 'wifi':      get_wifi_status(),
-                'storage':   get_storage_info(),
+                'storage':   get_storage_snapshot(),
                 'display':   get_display_and_mobo(),
             },
             '/api/all': lambda: {
@@ -354,6 +358,39 @@ class DiagnosticHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_json(start_stress_test(components=comps, level=lvl))
             except Exception as exc:
                 self.send_json({'success': False, 'message': f'Error iniciando estrés: {exc}'}, 400)
+            return
+
+        if self.path == '/api/report/save':
+            try:
+                name = bluetooth_send.save_report(payload.get('html'), str(payload.get('serial') or ''),
+                                                  str(payload.get('format') or 'html'), payload.get('report'))
+                self.send_json({'success': True, 'name': name})
+            except ValueError as exc:
+                self.send_json({'success': False, 'message': str(exc)}, 400)
+            return
+
+        if self.path == '/api/bluetooth/scan':
+            try:
+                with _BT_SEND_LOCK:
+                    self.send_json({'success': True, 'devices': bluetooth_send.scan_devices()})
+            except Exception as exc:
+                self.send_json({'success': False, 'devices': [], 'message': str(exc)[:160]})
+            return
+
+        if self.path == '/api/bluetooth/send':
+            with _BT_SEND_LOCK:
+                self.send_json(bluetooth_send.send_report(str(payload.get('address') or ''), payload.get('name')))
+            return
+
+        if self.path == '/api/brightness':
+            self.send_json(set_brightness(payload.get('percent')))
+            return
+
+        if self.path == '/api/stress/gpu-report':
+            try:
+                self.send_json(report_gpu_result(payload))
+            except Exception as exc:
+                self.send_json({'success': False, 'message': f'Informe GPU inválido: {exc}'}, 400)
             return
 
         if self.path == '/api/stress/stop':
@@ -433,6 +470,10 @@ class DiagnosticServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 
 def run_server(port=PORT):
+    try:
+        apply_default_once('/run' if os.access('/run', os.W_OK) else tempfile.gettempdir())
+    except Exception:
+        pass
     with DiagnosticServer((HOST, port), DiagnosticHandler) as httpd:
         print(f'==================================================')
         print(f'DIAGNOSTDONOR: http://{HOST}:{port}')

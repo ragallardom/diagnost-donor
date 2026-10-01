@@ -4,31 +4,68 @@
    ============================================================================== */
 
 // CHECKLIST STATE MANAGER
-function markCheckpassed(pillId, text) {
-  const el = document.getElementById(pillId);
-  if (el) {
-    el.classList.remove("failed");
-    el.classList.add("passed");
-    if (text) el.innerText = text;
-  }
+// "n/total" counter next to the checklist title: passed pills over all pills.
+function updateChecklistProgress() {
+  const el = document.getElementById("chk-progress");
+  if (!el) return;
+  const pills = [...document.querySelectorAll(".chk-bar-grid .chk-pill")].filter(p => p.style.display !== "none");
+  const passed = pills.filter(p => p.classList.contains("passed")).length;
+  const failed = pills.filter(p => p.classList.contains("failed")).length;
+  el.innerText = `${passed}/${pills.length}`;
+  el.classList.toggle("all-passed", pills.length > 0 && passed === pills.length);
+  el.classList.toggle("has-failed", failed > 0);
 }
 
-function markCheckfailed(pillId, text) {
+// The technician can flag any test as failed by hand (things the app cannot detect, e.g. an HDMI
+// monitor that stays black). The flag wins over the automatic state; the automatic state is kept so
+// that unflagging restores it.
+const manualFails = new Set();
+const autoStates = {};   // pillId -> "passed" | "failed" | ""
+
+function setCheck(pillId, state, text) {
   const el = document.getElementById(pillId);
   if (el) {
-    el.classList.remove("passed");
-    el.classList.add("failed");
-    if (text) el.innerText = text;
+    autoStates[pillId] = state;
+    if (text) (el.querySelector(".chk-text") || el).innerText = text;
+    const shown = manualFails.has(pillId) ? "failed" : state;
+    el.classList.toggle("passed", shown === "passed");
+    el.classList.toggle("failed", shown === "failed");
+    el.classList.toggle("manual", manualFails.has(pillId));
   }
+  updateChecklistProgress();
 }
 
-function unmarkCheckpassed(pillId, text) {
-  const el = document.getElementById(pillId);
-  if (el) {
-    el.classList.remove("passed");
-    el.classList.remove("failed");
-    if (text) el.innerText = text;
-  }
+function markCheckpassed(pillId, text) { setCheck(pillId, "passed", text); }
+function markCheckfailed(pillId, text) { setCheck(pillId, "failed", text); }
+function unmarkCheckpassed(pillId, text) { setCheck(pillId, "", text); }
+
+function isManualFail(pillId) { return manualFails.has(pillId); }
+
+function toggleManualFail(pillId) {
+  if (manualFails.has(pillId)) manualFails.delete(pillId); else manualFails.add(pillId);
+  setCheck(pillId, autoStates[pillId] || "", null);
+}
+
+function clearManualFails() {
+  [...manualFails].forEach(id => { manualFails.delete(id); setCheck(id, autoStates[id] || "", null); });
+}
+
+// Adds the small "✗" button to every checklist chip (the text moves into its own span).
+function initFailButtons() {
+  document.querySelectorAll(".chk-bar-grid .chk-pill").forEach(pill => {
+    if (pill.querySelector(".chk-text")) return;
+    const text = document.createElement("span");
+    text.className = "chk-text";
+    text.innerText = pill.innerText;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "chk-fail-btn";
+    btn.innerText = "✗";
+    btn.title = "Marcar como fallo (otro clic lo quita)";
+    btn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); toggleManualFail(pill.id); });
+    pill.innerText = "";
+    pill.append(text, btn);
+  });
 }
 
 // FORMAT CPU SHORT NAME FOR QUICK STATS HEADER (All CPU generations supported)
@@ -120,13 +157,58 @@ function formatCpuShortName(raw) {
   return clean.split(" ")[0];
 }
 
+// Brand shown before the short model in the top bar ("Lenovo T14 Gen 1", "HP EliteBook 845 G8").
+// Taken from the DMI vendor, falling back to the model string; empty for unknown/placeholder vendors.
+const BRAND_PATTERNS = [
+  [/lenovo/i, "Lenovo"],
+  [/hewlett|^hp\b|\bhp\b/i, "HP"],
+  [/dell/i, "Dell"],
+  [/asus/i, "ASUS"],
+  [/acer/i, "Acer"],
+  [/apple/i, "Apple"],
+  [/microsoft/i, "Microsoft"],
+  [/micro-star|\bmsi\b/i, "MSI"],
+  [/samsung/i, "Samsung"],
+  [/toshiba|dynabook/i, "Dynabook"],
+  [/huawei/i, "Huawei"],
+  [/lg electronics/i, "LG"],
+];
+
+function detectBrand(vendor, modelStr) {
+  for (const text of [vendor || "", modelStr || ""]) {
+    for (const [re, name] of BRAND_PATTERNS) {
+      if (re.test(text)) return name;
+    }
+  }
+  return "";
+}
+
+// Short model with its brand in front. The brand is not repeated if the short name already has it.
+function formatModelWithBrand(modelStr, vendor) {
+  const short = formatModelShortName(modelStr);
+  if (short === "--") return short;
+  const brand = detectBrand(vendor, modelStr);
+  if (!brand || short.toLowerCase().startsWith(brand.toLowerCase())) return short;
+  return `${brand} ${short}`;
+}
+
 // FORMAT LAPTOP / DESKTOP MODEL SHORT NAME FOR QUICK STATS HEADER (Dynamic multi-brand engine)
+// "6th", "7th Gen", "3rd" -> "Gen 6", "Gen 7", "Gen 3". "Gen 9" is left as is.
+function normalizeGeneration(text) {
+  return text.replace(/(\d+)(?:st|nd|rd|th)(?:\s+Gen)?/i, "Gen $1").replace(/\s+/g, " ").trim();
+}
+
 function formatModelShortName(modelStr) {
   if (!modelStr || ["--", "N/A", "To be filled by O.E.M.", "Default string", "System Product Name"].includes(modelStr.trim())) {
     return "--";
   }
 
   let s = modelStr.trim();
+
+  // "LENOVO 20S0S1EJ00 (ThinkPad T14 Gen 1)": the part number is outside and the real
+  // name inside the parentheses. Keep the name, not the code.
+  const codeThenName = s.match(/^(?:LENOVO\s+)?[0-9][0-9A-Z]{6,11}\s*\(([^)]*[A-Za-z]{3,}[^)]*)\)$/i);
+  if (codeThenName) s = codeThenName[1].trim();
 
   // Strip anything in parentheses (e.g. part numbers / SKU codes like "(SBKPFV3)", hardware revs "(1.0)")
   s = s.replace(/\s*\([^)]*\)/g, "").trim();
@@ -137,16 +219,17 @@ function formatModelShortName(modelStr) {
   // Strip machine type codes before model name (e.g. '21MLCTO1WW ThinkPad T14 Gen 6')
   s = s.replace(/^[0-9A-Z]{4,10}\s+(ThinkPad|ThinkBook|IdeaPad|Legion|Yoga|EliteBook|ProBook|Latitude|Precision|XPS|ZBook)/i, "$1");
 
-  // 2. Lenovo ThinkPad X1 Carbon / Yoga / Nano / Extreme / Titanium / Fold
-  const tpX1 = s.match(/ThinkPad\s+(X1\s+(?:Carbon|Yoga|Nano|Extreme|Titanium|Fold)(?:\s+(?:Gen\s+\d+|\d+th\s+Gen))?)/i);
+  // 2. Lenovo ThinkPad X1 (Carbon / Yoga / Nano / Extreme / Titanium Yoga / Fold / 2-in-1).
+  // Generations come as "Gen 9" or, on older firmware, "6th" / "7th Gen": all become "Gen N".
+  const tpX1 = s.match(/ThinkPad\s+(X1\s+(?:Carbon|Yoga|Nano|Extreme|Titanium\s+Yoga|Titanium|Fold(?:\s+\d+)?|2-in-1)(?:\s+(?:Gen\s+\d+|\d+(?:st|nd|rd|th)(?:\s+Gen)?))?)/i);
   if (tpX1) {
-    return tpX1[1].replace(/(\d+)th\s+Gen/i, "Gen $1");
+    return normalizeGeneration(tpX1[1]);
   }
 
-  // 3. Lenovo ThinkPad Series (T14, T14s, T15, T16, T480, T490, L14, L15, E14, E15, P14s, P15, P16, P1, X13, X13s, X280, X390, Z13, Z16, etc.)
-  const tpMatch = s.match(/ThinkPad\s+([A-Z]\d+[a-z]?(?:\s+(?:Gen\s+\d+|\d+th\s+Gen))?)/i);
+  // 3. Lenovo ThinkPad Series (T14, T14s, T16, T480, L14, E14, P14s, P1, X13, X13 Yoga, Z13...)
+  const tpMatch = s.match(/ThinkPad\s+([A-Z]\d+[a-z]?(?:\s+(?:Yoga|Nano|Extreme))?(?:\s+(?:Gen\s+\d+|\d+(?:st|nd|rd|th)(?:\s+Gen)?))?)/i);
   if (tpMatch) {
-    return tpMatch[1].replace(/(\d+)th\s+Gen/i, "Gen $1");
+    return normalizeGeneration(tpMatch[1]);
   }
 
   // 4. Lenovo ThinkBook / IdeaPad / Legion / Yoga
@@ -159,11 +242,15 @@ function formatModelShortName(modelStr) {
   }
 
   // 5. HP (EliteBook, ProBook, ZBook, Dragonfly, Pavilion, Envy, Spectre, Omen, Victus)
-  const hpMatch = s.match(/(EliteBook|ProBook|ZBook|Dragonfly|Pavilion|Envy|Spectre|Omen|Victus)\s+([^,]+)/i);
+  const hpMatch = s.match(/(Elite\s+Dragonfly|EliteBook|ProBook|ZBook|Dragonfly|Pavilion|Envy|Spectre|Omen|Victus)\s+([^,]+)/i);
   if (hpMatch) {
     const family = hpMatch[1];
     let rest = hpMatch[2];
-    rest = rest.replace(/\d+(?:\.\d+)?\s*(?:inch|\"|\-inch)/gi, "");
+    if (/^zbook$/i.test(family)) {
+      rest = rest.replace(/(\d+(?:\.\d+)?)\s*(?:inch|"|-inch)/gi, "$1");
+    } else {
+      rest = rest.replace(/\d+(?:\.\d+)?\s*(?:inch|"|-inch)/gi, "");
+    }
     rest = rest.replace(/\b(Notebook\s+PC|Mobile\s+Workstation|Laptop\s+PC|Laptop|PC)\b/gi, "");
     rest = rest.replace(/\s+/g, " ").trim();
     return `${family} ${rest}`.trim();
@@ -201,7 +288,8 @@ function formatModelShortName(modelStr) {
 
   // 10. Universal clean fallback for any other laptop/motherboard model
   s = s.replace(/\b(Notebook\s+PC|Mobile\s+Workstation|Laptop\s+PC|Laptop|PC|System\s+Product\s+Name)\b/gi, "");
-  s = s.replace(/\s+/g, " ").trim();
+  s = s.replace(/\s+/g, " ").replace(/[\s\/]+$/, "").trim();
+  if (/^(Generico|Generic)$/i.test(s)) return "--";
 
   if (s.length > 24) {
     return s.slice(0, 24).trim();
@@ -212,6 +300,7 @@ function formatModelShortName(modelStr) {
 // 1. UPDATE SYSTEM IDENTIFICATION & CPU
 function updateSystemTab(sys) {
   if (!sys) return;
+  lastSystemInfo = sys;
 
   const serialStr = sys.serial && sys.serial !== 'N/A' ? sys.serial : 'N/A';
   const headerSerialEl = document.getElementById("header-serial");
@@ -224,7 +313,7 @@ function updateSystemTab(sys) {
   const quickModelEl = document.getElementById("quick-model");
   const sysVendorEl = document.getElementById("sys-vendor");
   if (sysModelEl) sysModelEl.innerText = cardModel || "Detectando modelo...";
-  if (quickModelEl) quickModelEl.innerText = formatModelShortName(cardModel);
+  if (quickModelEl) quickModelEl.innerText = formatModelWithBrand(cardModel, sys.vendor);
   if (sysVendorEl) sysVendorEl.innerText = sys.vendor || "--";
 
   const sysCpuEl = document.getElementById("sys-cpu");
@@ -251,6 +340,7 @@ function updateSystemTab(sys) {
 function updateBatteryTab(batteries) {
   if (!batteries || batteries.length === 0) return;
   const bat = Array.isArray(batteries) ? batteries[0] : batteries;
+  lastBatteryInfo = bat;
 
   const quickBat = document.getElementById("quick-bat");
   const quickCharge = document.getElementById("quick-charge-status");
@@ -277,11 +367,13 @@ function updateBatteryTab(batteries) {
     batStatus.style.color = statusColor || "";
   }
 
-  if (batHealth) batHealth.innerText = `${bat.health_percent}%`;
-  if (batDesign) batDesign.innerText = `${bat.design_wh} Wh`;
-  if (batFull) batFull.innerText = `${bat.full_wh} Wh`;
+  const hasBattery = bat.present !== false;
+  const fmt = (v, unit) => (hasBattery && v) ? `${v} ${unit}` : "N/D";
+  if (batHealth) batHealth.innerText = (bat.health_percent === null || bat.health_percent === undefined) ? "N/D" : `${bat.health_percent}%`;
+  if (batDesign) batDesign.innerText = fmt(bat.design_wh, "Wh");
+  if (batFull) batFull.innerText = fmt(bat.full_wh, "Wh");
   if (batCycles) batCycles.innerText = bat.cycle_count || "N/A";
-  if (batVoltage) batVoltage.innerText = `${bat.voltage_v} V`;
+  if (batVoltage) batVoltage.innerText = fmt(bat.voltage_v, "V");
 
   const alertBanner = document.getElementById("charge-alert-banner");
   if (alertBanner) {
@@ -313,11 +405,11 @@ function updateThermalTab(thermal) {
       fansContainer.innerHTML = thermal.fans.map(f => `
         <div class="sensor-item">
           <span>${f.label}</span>
-          <strong>${f.rpm} RPM (${f.status})</strong>
+          <strong>${(f.rpm === null || f.rpm === undefined) ? f.status : `${f.rpm} RPM (${f.status})`}</strong>
         </div>
       `).join("");
     } else {
-      fansContainer.innerHTML = `<div class="sensor-item"><span>Ventilador</span><strong style="color: #94a3b8;">Sin lectura de RPM (la BIOS no la expone)</strong></div>`;
+      fansContainer.innerHTML = `<div class="sensor-item"><span>Ventilador</span><strong style="color: #94a3b8;">Sin lectura (la BIOS no la expone)</strong></div>`;
     }
   }
 
@@ -346,10 +438,10 @@ function temperatureColor(tempC) {
 }
 
 const THERMAL_LEVEL_TITLES = {
-  ok: "Salud térmica: correcta",
-  watch: "Salud térmica: vigilar",
-  clean: "Salud térmica: requiere mantenimiento",
-  unknown: "Salud térmica: sin datos"
+  ok: "Térmica correcta",
+  watch: "Térmica: vigilar",
+  clean: "Térmica: mantenimiento",
+  unknown: "Térmica: sin datos"
 };
 
 function escapeHtml(text) {
@@ -361,21 +453,18 @@ function updateThermalHealth(health) {
   const box = document.getElementById("thermal-health");
   if (!box || !health) return;
 
-  let throttleText = "No disponible en esta CPU";
-  if (health.throttling_supported) {
-    if (health.throttling_now) throttleText = "ACTIVO ahora";
-    else if (health.throttle_events_since_boot) throttleText = `Sí, ${health.throttle_events_since_boot} eventos desde el arranque`;
-    else throttleText = "No";
-  }
-  const tjmax = health.tjmax_c ? ` · Límite TjMax: ${health.tjmax_c} °C` : "";
+  // Short card: title + one line. Extra detail goes in the tooltip.
+  const detail = [];
+  if (health.tjmax_c) detail.push(`TjMax ${health.tjmax_c} °C`);
+  detail.push(`Mantenimiento si ≥${Math.round(health.hot_threshold_c)} °C sostenido`);
 
   box.className = `thermal-health level-${health.level}`;
   box.style.display = "block";
+  box.title = detail.join(" · ");
   box.innerHTML = `
     <div class="th-title"><span>${THERMAL_LEVEL_TITLES[health.level] || THERMAL_LEVEL_TITLES.unknown}</span></div>
     <div>${escapeHtml(health.message)}</div>
     ${health.prochot_note ? `<div class="th-reco">${escapeHtml(health.prochot_note)}</div>` : ""}
-    <div class="th-meta">Throttling térmico: <strong>${throttleText}</strong>${tjmax} · Umbral de mantenimiento: ≥${Math.round(health.hot_threshold_c)} °C sostenido</div>
   `;
 }
 
@@ -385,6 +474,7 @@ let _lastUsbStorageJson = "";
 // 4. UPDATE STORAGE (INTERNAL SSD/HDD & USB EXTERNAL DRIVES)
 function updateStorageTab(storage) {
   if (!storage) return;
+  lastStorageInfo = Array.isArray(storage) ? { internal: storage.filter(s => !s.is_usb), usb: storage.filter(s => s.is_usb) } : storage;
 
   let internalList = [];
   let usbList = [];
@@ -406,11 +496,16 @@ function updateStorageTab(storage) {
       _lastInternalStorageJson = currentInternalJson;
       if (internalList.length > 0) {
         internalContainer.innerHTML = internalList.map(s => {
-          const smartText = (s.smart_status || '').includes('100%') ? 'Salud 100% (Sin errores)' : (s.smart_status || 'Correcto');
+          // Verdict comes from real SMART data; without it the drive is never shown as healthy.
+          const smartText = escapeHtml(s.smart_status || 'SMART no disponible');
+          const smartColor = { ok: 'var(--success-green)', warning: '#f59e0b', failed: '#f87171' }[s.smart_health] || '#94a3b8';
           const hasReadTests = Boolean(s.device_read_test && s.nvme_read_test);
           const devReadPassed = s.device_read_test === 'PASSED';
           const nvmeReadPassed = s.nvme_read_test === 'PASSED';
-          const isOpal = hasReadTests && (!devReadPassed || !nvmeReadPassed);
+          // Opal only applies to SSDs; on HDDs a failed read is a plain read error.
+          const opalApplicable = s.opal_applicable !== false;
+          const readFailed = hasReadTests && (!devReadPassed || !nvmeReadPassed);
+          const isOpal = opalApplicable && readFailed;
 
           let readSectionHtml = '';
           if (s.device_read_test && s.nvme_read_test) {
@@ -426,7 +521,15 @@ function updateStorageTab(storage) {
           }
 
           let opalAlertHtml = '';
-          if (isOpal) {
+          if (readFailed && !opalApplicable) {
+            opalAlertHtml = `
+              <div class="card-spec-item" style="background: rgba(239, 68, 68, 0.08); border-left: 3px solid #ef4444; border-radius: 4px; padding: 0.45rem 0.6rem; margin-top: 0.35rem;">
+                <div class="spec-value spec-value-detail" style="color: #f87171; font-weight: 700; font-size: 0.82rem;">
+                  Error de lectura del disco
+                </div>
+              </div>
+            `;
+          } else if (isOpal) {
             opalAlertHtml = `
               <div class="card-spec-item" style="background: rgba(239, 68, 68, 0.08); border-left: 3px solid #ef4444; border-radius: 4px; padding: 0.45rem 0.6rem; margin-top: 0.35rem; display: flex; flex-direction: column; gap: 0.2rem;">
                 <div class="spec-value spec-value-detail" style="color: #f87171; font-weight: 700; font-size: 0.82rem;">
@@ -491,8 +594,8 @@ function updateStorageTab(storage) {
             </div>
             <div class="card-spec-item">
               <span class="spec-label">Salud del disco (SMART)</span>
-              <div class="spec-value spec-value-detail" style="color: ${isOpal ? '#f59e0b' : 'var(--success-green)'}; font-weight: 700;">
-                ${isOpal ? 'SMART PASSED' : smartText}
+              <div class="spec-value spec-value-detail" style="color: ${smartColor}; font-weight: 700;">
+                <span title="${escapeHtml(s.smart_detail || '')}">${smartText}</span>
               </div>
             </div>
             ${enduranceHtml}
@@ -557,10 +660,18 @@ function updateBluetoothTab(bt) {
   const textEl = document.getElementById("bt-status-text");
   const detailEl = document.getElementById("bt-name-detail");
 
-  if (bt.present) {
+  if (bt.present && (bt.hard_blocked || bt.soft_blocked)) {
+    // Adapter found but its radio is blocked: not a pass.
     if (textEl) {
-      textEl.innerText = "Operativo y alimentado";
-      textEl.style.color = "var(--success-green)";
+      textEl.innerText = bt.status || "Bloqueado";
+      textEl.style.color = "var(--warning-amber)";
+    }
+    if (detailEl) detailEl.innerText = bt.name || "HCI0";
+    unmarkCheckpassed("chk-bt", "Bluetooth");
+  } else if (bt.present) {
+    if (textEl) {
+      textEl.innerText = bt.status || "Operativo y alimentado";
+      textEl.style.color = bt.is_powered ? "var(--success-green)" : "var(--warning-amber)";
     }
     if (detailEl) detailEl.innerText = bt.name || "HCI0";
     markCheckpassed("chk-bt", "BLUETOOTH");
@@ -663,6 +774,14 @@ function updateWifiTab(wifi) {
     const ethCarrier = document.getElementById("eth-carrier-text");
     const ethLoopback = document.getElementById("eth-loopback-text");
 
+    // The Ethernet test only exists while there is a port (built in, or an external adapter plugged in).
+    const showEth = eth.present || ethernetTestedPassed;
+    const ethChip = document.getElementById("chk-eth");
+    const ethCard = document.getElementById("card-ethernet");
+    if (ethChip) ethChip.style.display = showEth ? "" : "none";
+    if (ethCard) ethCard.style.display = showEth ? "" : "none";
+    updateChecklistProgress();
+
     const isConnected = eth.present && (eth.connected || eth.loopback_verified);
 
     if (isConnected) {
@@ -720,27 +839,8 @@ function updateWifiTab(wifi) {
           ethLoopback.style.color = "var(--text-muted)";
         }
       }
-    } else {
-      if (ethernetTestedPassed) {
-        markCheckpassed("chk-eth", "ETHERNET");
-      } else {
-        markCheckfailed("chk-eth", "ETHERNET");
-        if (ethStatus) {
-          ethStatus.innerText = "No disponible / Sin puerto integrado";
-          ethStatus.style.color = "var(--danger-red)";
-        }
-        if (ethIface) {
-          ethIface.innerHTML = `<code>No integrado</code>`;
-        }
-        if (ethCarrier) {
-          ethCarrier.innerText = "Sin puerto RJ-45";
-          ethCarrier.style.color = "var(--text-muted)";
-        }
-        if (ethLoopback) {
-          ethLoopback.innerText = "No aplicable";
-          ethLoopback.style.color = "var(--text-muted)";
-        }
-      }
+    } else if (ethernetTestedPassed) {
+      markCheckpassed("chk-eth", "ETHERNET");
     }
   }
 }
@@ -763,6 +863,8 @@ function updateDriveSelector(storage) {
   } else if (storage.internal || storage.usb) {
     driveList = [...(storage.internal || []), ...(storage.usb || [])];
   }
+  // Opal unlock only targets SSDs (no pen drives, HDDs or SD/eMMC).
+  driveList = driveList.filter(s => s.opal_applicable !== false);
 
   if (driveList.length === 0) return;
 

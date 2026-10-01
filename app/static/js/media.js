@@ -50,26 +50,29 @@ async function startCamera() {
       cameraStream = await navigator.mediaDevices.getUserMedia(constraints2);
     }
 
-    const setCamPassed = () => {
-      if (video.videoWidth && video.videoHeight) {
-        resInfo.innerText = `Res: ${video.videoWidth}x${video.videoHeight}`;
-        const container = video.closest(".camera-preview-container");
-        if (container) {
-          container.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
-        }
-      }
-      markCheckpassed("chk-camera", "CÁMARA");
-    };
-
-    video.onloadedmetadata = setCamPassed;
-    video.onplaying = setCamPassed;
-    video.oncanplay = setCamPassed;
-
     video.srcObject = cameraStream;
     await video.play().catch(e => console.warn("play() diferido:", e));
 
-    overlay.style.display = "none";
-    setCamPassed();
+    // A pass needs a live track that delivers non-black frames, not just a granted stream.
+    const track = cameraStream.getVideoTracks()[0];
+    if (track) {
+      track.onended = () => { unmarkCheckpassed("chk-camera", "Cámara"); overlay.style.display = "block"; overlay.innerText = "La cámara se desconectó."; };
+      track.onmute = () => unmarkCheckpassed("chk-camera", "Cámara");
+    }
+    const verdict = await verifyCameraFrames(video, track);
+    if (video.videoWidth && video.videoHeight) {
+      resInfo.innerText = `Res: ${video.videoWidth}x${video.videoHeight}`;
+      const container = video.closest(".camera-preview-container");
+      if (container) container.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
+    }
+    if (verdict.ok) {
+      overlay.style.display = "none";
+      markCheckpassed("chk-camera", "CÁMARA");
+    } else {
+      overlay.style.display = "block";
+      overlay.innerText = verdict.reason;
+      unmarkCheckpassed("chk-camera", "Cámara");
+    }
   } catch (err) {
     overlay.style.display = "block";
     if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
@@ -82,6 +85,37 @@ async function startCamera() {
     resInfo.innerText = "Res: --";
     unmarkCheckpassed("chk-camera", "Cámara");
   }
+}
+
+// Wait for real frames, then check the picture is not black / flat (covered lens, dead sensor).
+async function verifyCameraFrames(video, track) {
+  if (!track || track.readyState !== "live") return { ok: false, reason: "La cámara no está activa." };
+  for (let i = 0; i < 15 && !(video.videoWidth && video.videoHeight); i++) {
+    await new Promise(r => setTimeout(r, 200));
+  }
+  if (!(video.videoWidth && video.videoHeight)) return { ok: false, reason: "La cámara no entrega imagen." };
+  if (track.muted) return { ok: false, reason: "La cámara no envía señal." };
+
+  const canvas = document.createElement("canvas");
+  canvas.width = 32;
+  canvas.height = 32;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  let best = { mean: 0, sd: 0 };
+  for (let i = 0; i < 4; i++) {           // auto-exposure needs a moment
+    await new Promise(r => setTimeout(r, 400));
+    ctx.drawImage(video, 0, 0, 32, 32);
+    const px = ctx.getImageData(0, 0, 32, 32).data;
+    let sum = 0, sumSq = 0, n = 0;
+    for (let k = 0; k < px.length; k += 4) {
+      const y = 0.299 * px[k] + 0.587 * px[k + 1] + 0.114 * px[k + 2];
+      sum += y; sumSq += y * y; n++;
+    }
+    const mean = sum / n;
+    const sd = Math.sqrt(Math.max(0, sumSq / n - mean * mean));
+    if (mean > best.mean || sd > best.sd) best = { mean: Math.max(best.mean, mean), sd: Math.max(best.sd, sd) };
+  }
+  if (best.mean < 8 && best.sd < 4) return { ok: false, reason: "Imagen negra: revisa el obturador o la cámara." };
+  return { ok: true };
 }
 
 function stopCamera() {
@@ -241,6 +275,9 @@ async function playFrequencySweep(channel) {
 // 3. MICROPHONE VU METER & RECORDING
 // ─────────────────────────────────────────────────────────────────
 let micSilentGain = null;
+let micSignalSeen = false;
+let micPeakMeter = 0;
+let micStartedAt = 0;
 
 async function startMicTest() {
   const statusEl = document.getElementById("mic-status-text");
@@ -283,9 +320,14 @@ async function startMicTest() {
     }
     source.connect(micSilentGain);
 
+    // Connected is not working: it passes only after a real signal arrives.
+    micSignalSeen = false;
+    micPeakMeter = 0;
+    micStartedAt = performance.now();
+    unmarkCheckpassed("chk-mic", "Micrófono");
     if (statusEl) {
-      statusEl.innerText = "Micrófono activo (Habla o produce sonido para probar)";
-      statusEl.style.color = "var(--success-green)";
+      statusEl.innerText = "Habla o haz ruido para verificar";
+      statusEl.style.color = "var(--text-main)";
     }
 
     const bufferLength = micAnalyser.frequencyBinCount;
@@ -325,8 +367,15 @@ async function startMicTest() {
         vuFill.style.width = `${smoothedMeter}%`;
       }
 
-      if (smoothedMeter >= 15) {
+      micPeakMeter = Math.max(micPeakMeter, targetPercent);
+      if (smoothedMeter >= 15 && !micSignalSeen) {
+        micSignalSeen = true;
         markCheckpassed("chk-mic", "MICRÓFONO");
+        if (statusEl) { statusEl.innerText = "Señal detectada"; statusEl.style.color = "var(--success-green)"; }
+      } else if (!micSignalSeen && statusEl && performance.now() - micStartedAt > 6000) {
+        const muted = micStream && micStream.getAudioTracks().some(t => t.muted || t.readyState !== "live");
+        statusEl.innerText = muted ? "Micrófono sin señal" : "Sin señal: habla más cerca o revisa el micrófono";
+        statusEl.style.color = "var(--warning-amber)";
       }
 
       micAnimId = requestAnimationFrame(updateVu);
@@ -394,6 +443,7 @@ async function recordAndPlayMic() {
     }
 
     micAudioChunks = [];
+    micPeakMeter = 0;
 
     // Select optimal supported audio container
     let options = {};
@@ -453,6 +503,7 @@ async function recordAndPlayMic() {
         }
       } catch (decErr) {
         console.warn("Análisis de buffer de audio omitido:", decErr);
+        isSilence = micPeakMeter < 8;   // could not decode: fall back on the live level seen while recording
       }
 
       if (isSilence) {
@@ -660,7 +711,7 @@ function finishScreenTest() {
   closeScreenTestModal();
   const statusEl = document.getElementById("screen-test-status");
   if (statusEl) {
-    statusEl.innerText = "Pantalla: Aprobada";
+    statusEl.innerText = "Aprobada";
     statusEl.style.color = "var(--success-green)";
   }
   markCheckpassed("chk-screen", "PANTALLA");
@@ -680,7 +731,9 @@ function closeScreenTestModal(event) {
   if (document.fullscreenElement && document.exitFullscreen) {
     document.exitFullscreen().catch(() => {});
   }
-  if (currentScreenColorIndex >= 3 && !screenTestCompleted) {
+  // Leaving with Esc only passes if the last pattern was reached: dead pixels can hide
+  // on any of the 9 colors, so seeing the first few is not a full check.
+  if (currentScreenColorIndex >= SCREEN_TEST_COLORS.length - 1 && !screenTestCompleted) {
     finishScreenTest();
   }
 }
@@ -690,8 +743,34 @@ function resetScreenTest() {
   screenTestCompleted = false;
   const statusEl = document.getElementById("screen-test-status");
   if (statusEl) {
-    statusEl.innerText = "Pantalla: Pendiente";
+    statusEl.innerText = "Pendiente";
     statusEl.style.color = "var(--text-muted)";
   }
   unmarkCheckpassed("chk-screen", "Pantalla");
+}
+
+// ─────────────────────────────────────────────────────────────────
+// 6. SCREEN BRIGHTNESS (backend sets 90% at boot; slider to change it)
+// ─────────────────────────────────────────────────────────────────
+async function initBrightness() {
+  const row = document.getElementById("brightness-row");
+  const range = document.getElementById("brightness-range");
+  const label = document.getElementById("brightness-val");
+  if (!row || !range) return;
+  try {
+    const res = await fetch("/api/brightness");
+    const data = await res.json();
+    if (!data.supported) return;          // no controllable backlight: keep the slider hidden
+    range.value = data.percent;
+    label.innerText = `${data.percent}%`;
+    row.style.display = "flex";
+  } catch (e) {
+    return;
+  }
+  let timer = null;
+  range.addEventListener("input", () => {
+    label.innerText = `${range.value}%`;
+    clearTimeout(timer);
+    timer = setTimeout(() => apiPost("/api/brightness", { percent: parseInt(range.value) }).catch(() => {}), 120);
+  });
 }

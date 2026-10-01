@@ -29,6 +29,9 @@ const keyDisplayNames = {
   "ArrowDown": "v", "ArrowRight": "->", "Fn": "Fn"
 };
 
+// Keys that the browser cannot report from the physical keyboard (handled by firmware / the OS).
+const MANUAL_VALIDATION_KEYS = ["Fn", "MetaLeft", "AltLeft"];
+
 // MULTIMEDIA / HOTKEY NORMALIZER (MAPS HARDWARE COMBOS TO F-KEYS & FN)
 const mediaKeyMap = {
   "AudioVolumeMute": "F1", "VolumeMute": "F1", "Help": "F1",
@@ -127,10 +130,16 @@ function buildKeyboardMatrix() {
       tile.innerText = label;
       tile.title = `${label}: Presiona la tecla física o haz clic para marcarla`;
 
-      // Allow clicking any key in the matrix as a failsafe
+      // Clicking only validates keys the browser can never receive (Fn, Win/Super). Any other
+      // key must be pressed physically: otherwise the whole test could be passed with the mouse.
       tile.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
+        if (!MANUAL_VALIDATION_KEYS.includes(code)) {
+          const lastKeyEl = document.getElementById("last-key-code");
+          if (lastKeyEl) lastKeyEl.innerText = `${label}: presiona la tecla física`;
+          return;
+        }
         totalKeyPresses++;
         markKeyPassed(code);
         const lastKeyEl = document.getElementById("last-key-code");
@@ -201,6 +210,7 @@ function initKeyListeners() {
         }
         closeOpalModal();
         if (typeof closePowerModal === "function") closePowerModal();
+        if (typeof closeReportModal === "function") closeReportModal();
       } else if (e.key === "Enter" && e.target.id === "opal-psid-input") {
         e.preventDefault();
         submitOpalRevert();
@@ -228,6 +238,9 @@ function initKeyListeners() {
     requestKeyboardLock();
 
     const code = normalizeKeyCode(e);
+
+    // Holding a key generates auto-repeat: it is one press, not many (and must not cycle the color).
+    if (e.repeat) return;
 
     totalKeyPresses++;
     const keyCountEl = document.getElementById("key-count");

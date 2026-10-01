@@ -282,8 +282,7 @@ def read_cpu_times():
 
 # ── Evaluation ───────────────────────────────────────────────────────────────
 
-RECOMMENDATION_CLEAN = ('Se recomienda limpieza interna (ventilador, disipador y rejillas) '
-                        'y cambio de pasta térmica.')
+RECOMMENDATION_CLEAN = 'Limpieza interna y cambio de pasta térmica.'
 
 
 def evaluate_stress_samples(samples, throttle, tjmax=None, base_mhz=None,
@@ -305,6 +304,7 @@ def evaluate_stress_samples(samples, throttle, tjmax=None, base_mhz=None,
         'hot_threshold_c': HOT_SUSTAINED_C,
         'tjmax_c': tjmax,
         'peak_c': None,
+        'avg_c': None,
         'sustained_avg_c': None,
         'sustained_hot_pct': None,
         'sustained_sec': 0,
@@ -317,6 +317,7 @@ def evaluate_stress_samples(samples, throttle, tjmax=None, base_mhz=None,
         return result
 
     result['peak_c'] = round(max(s['temp'] for s in valid), 1)
+    result['avg_c'] = round(sum(s['temp'] for s in valid) / len(valid), 1)
     sustained = [s for s in valid if s['t'] >= TURBO_WINDOW_SEC]
     if len(sustained) < MIN_SUSTAINED_SEC:
         # Short test: evaluate what we have but flag it as preliminary.
@@ -450,24 +451,19 @@ class ThermalMonitor:
         since_boot_events = (counters.get('core_events', 0) + counters.get('package_events', 0)) if counters.get('supported') else None
         recently_throttled = self.last_throttle_at is not None and (now - self.last_throttle_at) < 5
 
-        level, message = LEVEL_OK, 'Sin throttling térmico ni temperaturas sostenidas altas.'
+        level, message = LEVEL_OK, 'Sin problemas térmicos.'
         if hot_sec >= GENERAL_SUSTAINED_SEC:
             level = LEVEL_CLEAN
-            message = (f'CPU sobre {int(HOT_SUSTAINED_C)} °C durante {hot_sec} s. ' + RECOMMENDATION_CLEAN)
+            message = f'CPU sobre {int(HOT_SUSTAINED_C)} °C durante {hot_sec} s. ' + RECOMMENDATION_CLEAN
         elif idle_hot_sec >= GENERAL_SUSTAINED_SEC:
             level = LEVEL_CLEAN
-            message = (f'CPU a {temp:.0f} °C en reposo (uso bajo) durante {idle_hot_sec} s: '
-                       'posible polvo acumulado o pasta térmica seca. ' + RECOMMENDATION_CLEAN)
+            message = f'CPU a {temp:.0f} °C en reposo: posible polvo o pasta seca. ' + RECOMMENDATION_CLEAN
         elif recently_throttled:
             level = LEVEL_WATCH
-            message = 'Throttling térmico activo en este momento. Confirmar con la prueba de estrés (nivel Media).'
-        elif since_boot_events:
-            level = LEVEL_WATCH
-            message = (f'Se registraron {since_boot_events} eventos de throttling térmico desde el arranque. '
-                       'Confirmar con la prueba de estrés (nivel Media).')
+            message = 'Sobrecalentamiento: la CPU reduce su rendimiento.'
         elif temp is None:
             level = LEVEL_UNKNOWN
-            message = 'El equipo no expone un sensor de temperatura de CPU.'
+            message = 'Sin sensor de temperatura de CPU.'
 
         # Only the live PROCHOT# bit: the sticky log bit may be set by firmware at boot.
         prochot = bool(msr and msr['prochot_now'])
@@ -482,6 +478,5 @@ class ThermalMonitor:
             'throttling_now': recently_throttled,
             'throttle_events_since_boot': since_boot_events,
             'prochot_detected': prochot,
-            'prochot_note': ('PROCHOT externo detectado: el EC/placa pidió bajar el rendimiento (cargador, batería '
-                             'o VRM). No se soluciona con limpieza; revisar alimentación.') if prochot and not since_boot_events else '',
+            'prochot_note': ('PROCHOT externo: revisar cargador y batería (no se arregla con limpieza).') if prochot and not since_boot_events else '',
         }
