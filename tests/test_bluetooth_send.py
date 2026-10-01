@@ -3,6 +3,7 @@
 import os
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -29,35 +30,81 @@ class ReportFileTests(unittest.TestCase):
         name = bs.save_report('<html>ok</html>', 'SN1')
         self.assertTrue(os.path.isfile(bs.resolve_report(name)))
 
+    def fake_chrome(self, body):
+        """An executable that behaves like a Chrome we control (arguments are Chrome's own flags)."""
+        path = os.path.join(self.tmp.name, 'fake-chrome')
+        with open(path, 'w') as f:
+            f.write('#!/usr/bin/env python3\nimport sys, time\n'
+                    'out = [a for a in sys.argv if a.startswith("--print-to-pdf=")][0].split("=", 1)[1]\n' + body)
+        os.chmod(path, 0o755)
+        patcher = mock.patch('bluetooth_send.find_chrome', return_value=path)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return path
+
+    PDF = 'open(out, "wb").write(b"%PDF-1.4 fake\\n%%EOF\\n")\n'
+
     def test_pdf_is_created_and_only_the_pdf_is_kept(self):
-        def fake_chrome(cmd, timeout=10):
-            out = [a for a in cmd if a.startswith('--print-to-pdf=')][0].split('=', 1)[1]
-            with open(out, 'wb') as f:
-                f.write(b'%PDF-1.4 fake')
-            return mock.Mock(returncode=0)
+        self.fake_chrome(self.PDF)
+        name = bs.save_report('<html>ok</html>', 'SN1', 'pdf')
+        self.assertTrue(name.endswith('.pdf'))
+        self.assertIn(name, os.listdir(self.tmp.name))
+        self.assertFalse([n for n in os.listdir(self.tmp.name) if n.endswith('.html')])   # temp HTML removed
+        self.assertTrue(bs.resolve_report(name).endswith('.pdf'))
+
+    def test_chrome_that_never_exits_does_not_cause_a_timeout(self):
+        """The reported bug: Chrome writes the PDF but lingers (offline firewall); we must not wait for it."""
+        self.fake_chrome(self.PDF + 'time.sleep(600)\n')
+        t0 = time.monotonic()
+        name = bs.save_report('<html>ok</html>', 'SN1', 'pdf')
+        self.assertLess(time.monotonic() - t0, 10)
+        self.assertTrue(name.endswith('.pdf'))
+
+    def test_chrome_flags_keep_it_offline_and_off_the_kiosk_profile(self):
+        flags = []
+
+        class P:
+            pid = 0
+            def poll(self): return 0
+            def wait(self, timeout=None): return 0
+
+        def fake_popen(cmd, **kw):
+            flags.extend(cmd)
+            with open([a for a in cmd if a.startswith('--print-to-pdf=')][0].split('=', 1)[1], 'wb') as f:
+                f.write(b'%PDF-1.4 x\n%%EOF\n')
+            return P()
 
         with mock.patch('bluetooth_send.find_chrome', return_value='/usr/bin/chrome'), \
-             mock.patch('bluetooth_send._run', side_effect=fake_chrome) as run:
-            name = bs.save_report('<html>ok</html>', 'SN1', 'pdf')
-        self.assertTrue(name.endswith('.pdf'))
-        self.assertEqual(os.listdir(self.tmp.name), [name])            # the temporary HTML is removed
-        cmd = run.call_args[0][0]
-        for flag in ('--headless', '--no-sandbox', '--no-pdf-header-footer'):
-            self.assertIn(flag, cmd)
-        self.assertTrue(any(a.startswith('--user-data-dir=') for a in cmd))   # never the kiosk profile
-        self.assertTrue(bs.resolve_report(name).endswith('.pdf'))
+             mock.patch('bluetooth_send.subprocess.Popen', side_effect=fake_popen), \
+             mock.patch('bluetooth_send.os.killpg'):
+            bs.save_report('<html>ok</html>', 'SN1', 'pdf')
+        for flag in ('--headless', '--no-sandbox', '--no-proxy-server', '--disable-background-networking',
+                     '--no-pdf-header-footer'):
+            self.assertIn(flag, flags)
+        self.assertTrue(any(a.startswith('--user-data-dir=') for a in flags))
 
     def test_pdf_failures_are_reported_and_leave_nothing_behind(self):
         with mock.patch('bluetooth_send.find_chrome', return_value=None):
             with self.assertRaises(ValueError):
                 bs.save_report('<html>ok</html>', 'SN1', 'pdf')
         self.assertEqual(os.listdir(self.tmp.name), [])
-        with mock.patch('bluetooth_send.find_chrome', return_value='/x/chrome'), \
-             mock.patch('bluetooth_send._run', return_value=mock.Mock(returncode=0)):      # no file written
-            with self.assertRaises(ValueError):
-                bs.save_report('<html>ok</html>', 'SN1', 'pdf')
+        self.fake_chrome('sys.exit(3)\n')                       # exits without writing a PDF
+        with self.assertRaises(ValueError):
+            bs.save_report('<html>ok</html>', 'SN1', 'pdf')
         with self.assertRaises(ValueError):
             bs.save_report('<html>ok</html>', 'SN1', 'docx')
+
+    def test_truly_stuck_chrome_times_out_and_is_killed(self):
+        self.fake_chrome('time.sleep(600)\n')                   # never writes anything
+        with mock.patch('bluetooth_send.html_to_pdf', wraps=bs.html_to_pdf) as wrapped:
+            html = os.path.join(self.tmp.name, 'x.html')
+            with open(html, 'w') as fh:
+                fh.write('<html></html>')
+            t0 = time.monotonic()
+            with self.assertRaises(RuntimeError) as ctx:
+                bs.html_to_pdf(html, os.path.join(self.tmp.name, 'x.pdf'), timeout=2)
+        self.assertIn('Tiempo agotado', str(ctx.exception))
+        self.assertLess(time.monotonic() - t0, 12)
 
     def test_rejects_empty_huge_and_path_names(self):
         for bad in ('', '   ', None, 5):

@@ -51,27 +51,72 @@ def find_chrome():
     return None
 
 
-def html_to_pdf(html_path, pdf_path, timeout=40):
-    """Print an HTML file to PDF with headless Chrome (a separate profile: the kiosk Chrome is running)."""
+# Headless Chrome must not touch the network: the kiosk firewall DROPs packets, so proxy auto-detection,
+# component updates or sync would stall it for a long time.
+_CHROME_OFFLINE_FLAGS = (
+    '--headless', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage',
+    '--no-proxy-server', '--disable-background-networking', '--disable-component-update',
+    '--disable-sync', '--disable-extensions', '--disable-default-apps', '--disable-breakpad',
+    '--disable-client-side-phishing-detection', '--no-first-run', '--no-default-browser-check',
+    '--metrics-recording-only', '--mute-audio', '--no-pdf-header-footer',
+)
+
+
+def _pdf_is_complete(path):
+    try:
+        with open(path, 'rb') as f:
+            head = f.read(5)
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - 1024))
+            tail = f.read()
+        return head == b'%PDF-' and b'%%EOF' in tail, size
+    except OSError:
+        return False, 0
+
+
+def html_to_pdf(html_path, pdf_path, timeout=60):
+    """Print an HTML file to PDF with headless Chrome (separate profile: the kiosk Chrome is running).
+
+    Chrome can take long to exit (or hang on shutdown) even after the PDF is written, so the file
+    itself is what is waited for: once it is complete and stable the browser is killed.
+    """
     chrome = find_chrome()
     if not chrome:
         raise RuntimeError('Chrome no disponible para crear el PDF')
     profile = tempfile.mkdtemp(prefix='diag_pdf_')
+    log = tempfile.TemporaryFile()
+    proc = subprocess.Popen(
+        [chrome, *_CHROME_OFFLINE_FLAGS, f'--user-data-dir={profile}', f'--print-to-pdf={pdf_path}',
+         'file://' + html_path],
+        stdout=subprocess.DEVNULL, stderr=log, start_new_session=True)
     try:
-        _run([chrome, '--headless', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage',
-              f'--user-data-dir={profile}', '--no-pdf-header-footer', f'--print-to-pdf={pdf_path}',
-              'file://' + html_path], timeout)
-    except subprocess.TimeoutExpired:
+        deadline = time.monotonic() + timeout
+        last_size = -1
+        while time.monotonic() < deadline:
+            complete, size = _pdf_is_complete(pdf_path)
+            if complete and size == last_size:
+                return                       # written and no longer growing
+            last_size = size if complete else -1
+            if proc.poll() is not None:      # Chrome exited: the file is final (or it failed)
+                if _pdf_is_complete(pdf_path)[0]:
+                    return
+                log.seek(0)
+                tail = log.read().decode('utf-8', 'replace').strip().splitlines()[-1:] or ['sin salida']
+                raise RuntimeError(f'No se pudo crear el PDF ({tail[0][:80]})')
+            time.sleep(0.3)
         raise RuntimeError('Tiempo agotado creando el PDF')
     finally:
+        try:
+            os.killpg(proc.pid, 9)           # the whole Chrome process tree
+        except (OSError, ProcessLookupError):
+            pass
+        try:
+            proc.wait(timeout=5)
+        except Exception:
+            pass
+        log.close()
         shutil.rmtree(profile, ignore_errors=True)
-    try:
-        with open(pdf_path, 'rb') as f:
-            ok = f.read(5) == b'%PDF-'
-    except OSError:
-        ok = False
-    if not ok:
-        raise RuntimeError('No se pudo crear el PDF')
 
 
 def save_report(html, serial, fmt='html', max_bytes=200_000):
