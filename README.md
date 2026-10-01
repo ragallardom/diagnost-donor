@@ -177,7 +177,7 @@ diagnost-donor/
 ├── Aplicaciones/                 # Paquetes .deb locales (Google Chrome necesario para compilar)
 │   └── google-chrome-stable_current_amd64.deb
 ├── app/                          # Aplicación de diagnóstico
-│   ├── modules/                  # Módulos Python (batería, CPU, RAM, discos, wifi, bluetooth, stress, etc.)
+│   ├── modules/                  # Módulos Python (batería, CPU, RAM, discos, wifi, bluetooth, stress, brillo, informe PDF y envío Bluetooth, etc.)
 │   ├── server.py                 # Servidor local HTTP REST (puerto 8080)
 │   └── static/                   # Frontend web (HTML, CSS y JS modular, sin build)
 │       ├── index.html
@@ -191,7 +191,7 @@ diagnost-donor/
 │   ├── start_qa.sh               # Script de inicio en el entorno Live con healthcheck
 │   └── VERSION                   # Archivo de control de versión
 ├── ISOs/                         # Directorio donde se guardan las ISOs compiladas
-├── tests/                        # Tests unitarios (unittest, sin dependencias): estrés, diagnósticos, servidor, térmica, rendimiento
+├── tests/                        # Tests unitarios (unittest, sin dependencias): estrés, diagnósticos, servidor, térmica, informe PDF/Bluetooth, nombres de modelo y escala de pantalla (estos dos últimos usan `node` y se omiten si no está)
 └── README.md
 ```
 
