@@ -60,19 +60,20 @@ function reportDetail(id, detailId) {
   return text.length > 90 ? text.slice(0, 87) + "…" : text;
 }
 
-function buildReportHtml(comments, stress) {
-  const e = escapeHtml;
+// The report is built as a plain model first: the HTML is rendered from it here and the PDF by the
+// backend (pdf_report.py), so both always show the same content.
+function buildReportModel(comments, stress) {
   const sys = lastSystemInfo || {};
   const bat = lastBatteryInfo || {};
   const pills = [...document.querySelectorAll(".chk-bar-grid .chk-pill")].filter(p => p.style.display !== "none");
   const byId = Object.fromEntries(pills.map(p => [p.id, p]));
 
-  let ok = 0, fail = 0, pending = 0;
-  const rows = REPORT_ITEMS.filter(([id]) => byId[id]).map(([id, label, detailId]) => {
-    const [cls, text] = reportStatus(byId[id]);
-    if (cls === "ok") ok++; else if (cls === "fail") fail++; else pending++;
-    return `<tr><td>${label}</td><td><span class="b ${cls}">${text}</span></td><td>${e(reportDetail(id, detailId))}</td></tr>`;
-  }).join("");
+  const counts = { ok: 0, fail: 0, pending: 0 };
+  const checklist = REPORT_ITEMS.filter(([id]) => byId[id]).map(([id, label, detailId]) => {
+    const [cls] = reportStatus(byId[id]);
+    counts[cls]++;
+    return { label, status: cls, detail: reportDetail(id, detailId) };
+  });
 
   const disks = ((lastStorageInfo && lastStorageInfo.internal) || []).map(d => `${d.model || d.device} (${d.size_gb} GB)`).join(", ");
   const info = [
@@ -80,45 +81,73 @@ function buildReportHtml(comments, stress) {
     ["RAM", sys.ram ? `${sys.ram.total_gb} GB` : ""],
     ["Batería", bat && bat.present !== false ? `Salud ${bat.health_percent ?? "N/D"}${bat.health_percent != null ? "%" : ""} · Ciclos ${bat.cycle_count ?? "N/A"}` : "Sin batería"],
     ["Discos", disks],
-  ].filter(([, v]) => v).map(([k, v]) => `<tr><th>${k}</th><td>${e(v)}</td></tr>`).join("");
+  ].filter(([, v]) => v);
 
-  let stressHtml = "";
+  let stressModel = null;
   if (stress && stress.results && Object.keys(stress.results).length) {
     const names = { cpu: "CPU", ram: "RAM", ssd: "SSD", gpu: "GPU" };
-    const srows = Object.entries(stress.results).map(([c, r]) => {
-      const cls = r.passed === true ? "ok" : (r.passed === false ? "fail" : "warn");
-      const txt = r.passed === true ? "OK" : (r.passed === false ? "Falló" : "Sin verificar");
-      return `<tr><td>${names[c] || c}</td><td><span class="b ${cls}">${txt}</span></td><td>${e(r.message || "")}</td></tr>`;
-    }).join("");
+    const rows = Object.entries(stress.results).map(([c, r]) => ({
+      name: names[c] || c,
+      status: r.passed === true ? "ok" : (r.passed === false ? "fail" : "warn"),
+      message: r.message || "",
+    }));
     const t = stress.max_temp_c;
-    const tcls = t >= TEMP_HOT_C ? "fail" : (t >= TEMP_WARN_C ? "warn" : "ok");
     const th = stress.thermal_assessment || {};
     const avg = th.sustained_avg_c ?? th.avg_c;
-    // Plain wording, no maintenance advice: what happened, not what to do about it.
-    const verdict = { ok: "", watch: "Temperaturas altas", clean: "Sobrecalentamiento" }[th.level] || "";
-    const caution = { watch: "Precaución: vigilar la temperatura en uso intenso", clean: "Precaución: puede afectar el rendimiento y la vida útil" }[th.level] || "";
-    const thr = th.throttle && th.throttle.supported && th.throttle.events
-      ? `Throttling térmico: ${th.throttle.events} ${th.throttle.events === 1 ? "evento" : "eventos"} (${(th.throttle.time_ms / 1000).toFixed(1)} s)` : "";
-    stressHtml = `<h2>Prueba de estrés${stress.level ? " · " + e({ quick: "Rápida", medium: "Media", deep: "Profunda" }[stress.level] || "") : ""}</h2>
-      <div class="box"><table>${srows}</table></div>
-      <div class="sum"><span>Temp. máx: ${t == null ? "N/D" : `<span class="b ${tcls}">${Math.round(t)} °C</span>`}</span>
-      <span>Prom.: ${avg == null ? "N/D" : Math.round(avg) + " °C"}</span>
-      <span>Estado: ${stress.aborted ? "Interrumpido" : ((stress.failed_components || []).length ? "Con fallos" : "Superado")}</span></div>
-      ${verdict || thr ? `<div class="sub" style="margin-top:6px">${[verdict ? `<b>${verdict}</b>` : "", thr, caution].filter(Boolean).join(" · ")}</div>` : ""}`;
+    stressModel = {
+      title: { quick: "Rápida", medium: "Media", deep: "Profunda" }[stress.level] || "",
+      rows,
+      max: t == null ? "" : `${Math.round(t)} °C`,
+      maxStatus: t >= TEMP_HOT_C ? "fail" : (t >= TEMP_WARN_C ? "warn" : "ok"),
+      avg: avg == null ? "" : `${Math.round(avg)} °C`,
+      state: stress.aborted ? "Interrumpido" : ((stress.failed_components || []).length ? "Con fallos" : "Superado"),
+      // Plain wording, no maintenance advice: what happened, not what to do about it.
+      verdict: { watch: "Temperaturas altas", clean: "Sobrecalentamiento" }[th.level] || "",
+      throttle: th.throttle && th.throttle.supported && th.throttle.events
+        ? `Throttling térmico: ${th.throttle.events} ${th.throttle.events === 1 ? "evento" : "eventos"} (${(th.throttle.time_ms / 1000).toFixed(1)} s)` : "",
+      caution: { watch: "Precaución: vigilar la temperatura en uso intenso", clean: "Precaución: puede afectar el rendimiento y la vida útil" }[th.level] || "",
+    };
   }
 
-  const note = (comments || "").trim();
+  return { date: new Date().toLocaleString("es"), serial: sys.serial || "", info, counts, checklist,
+           stress: stressModel, comments: (comments || "").trim() };
+}
+
+function reportModelToHtml(m) {
+  const e = escapeHtml;
+  const badge = (cls, text) => `<span class="b ${cls}">${e(text)}</span>`;
+  const label = { ok: "Aprobado", fail: "Falló", pending: "Pendiente" };
+  const rows = m.checklist.map(c => `<tr><td>${e(c.label)}</td><td>${badge(c.status, label[c.status])}</td><td>${e(c.detail)}</td></tr>`).join("");
+  const info = m.info.map(([k, v]) => `<tr><th>${e(k)}</th><td>${e(v)}</td></tr>`).join("");
+
+  let stressHtml = "";
+  const s = m.stress;
+  if (s) {
+    const text = { ok: "OK", fail: "Falló", warn: "Sin verificar" };
+    const srows = s.rows.map(r => `<tr><td>${e(r.name)}</td><td>${badge(r.status, text[r.status])}</td><td>${e(r.message)}</td></tr>`).join("");
+    const extra = [s.verdict ? `<b>${e(s.verdict)}</b>` : "", e(s.throttle), e(s.caution)].filter(Boolean).join(" · ");
+    stressHtml = `<h2>Prueba de estrés${s.title ? " · " + e(s.title) : ""}</h2>
+      <div class="box"><table>${srows}</table></div>
+      <div class="sum"><span>Temp. máx: ${s.max ? badge(s.maxStatus, s.max) : "N/D"}</span>
+      <span>Prom.: ${e(s.avg || "N/D")}</span><span>Estado: ${e(s.state)}</span></div>
+      ${extra ? `<div class="sub" style="margin-top:6px">${extra}</div>` : ""}`;
+  }
+
   return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Informe ${e(sys.serial || "")}</title><style>${REPORT_CSS}</style></head><body><main>
+<title>Informe ${e(m.serial)}</title><style>${REPORT_CSS}</style></head><body><main>
 <h1>Informe de diagnóstico</h1>
-<div class="sub">${e(new Date().toLocaleString("es"))}</div>
+<div class="sub">${e(m.date)}</div>
 <h2>Equipo</h2><div class="box"><table>${info}</table></div>
 <h2>Checklist</h2>
-<div class="sum"><span class="b ok">${ok} aprobadas</span><span class="b fail">${fail} con fallo</span><span class="b pending">${pending} pendientes</span></div>
+<div class="sum">${badge("ok", m.counts.ok + " aprobadas")}${badge("fail", m.counts.fail + " con fallo")}${badge("pending", m.counts.pending + " pendientes")}</div>
 <div class="box" style="margin-top:8px"><table>${rows}</table></div>
 ${stressHtml}
-${note ? `<h2>Comentarios</h2><div class="box"><pre>${e(note)}</pre></div>` : ""}
+${m.comments ? `<h2>Comentarios</h2><div class="box"><pre>${e(m.comments)}</pre></div>` : ""}
 </main></body></html>`;
+}
+
+function buildReportHtml(comments, stress) {
+  return reportModelToHtml(buildReportModel(comments, stress));
 }
 
 // ── Modal ────────────────────────────────────────────────────────────────
@@ -175,7 +204,11 @@ async function findPhonesForReport() {
   if (list) list.innerHTML = "";
   try {
     setReportStatus("Preparando informe...");
-    const saved = await (await apiPost("/api/report/save", { html: await getReportHtml(), serial: (lastSystemInfo && lastSystemInfo.serial) || "", format: document.getElementById("report-format")?.value || "html" })).json();
+    const format = document.getElementById("report-format")?.value || "html";
+    const model = buildReportModel(document.getElementById("report-comments")?.value || "", await currentStressStatus());
+    const payload = { format, serial: model.serial };
+    if (format === "pdf") payload.report = model; else payload.html = reportModelToHtml(model);
+    const saved = await (await apiPost("/api/report/save", payload)).json();
     if (!saved.success) throw new Error(saved.message || "No se pudo crear el informe");
     reportFileName = saved.name;
 

@@ -363,7 +363,7 @@ class DiagnosticHandler(http.server.SimpleHTTPRequestHandler):
         if self.path == '/api/report/save':
             try:
                 name = bluetooth_send.save_report(payload.get('html'), str(payload.get('serial') or ''),
-                                                  str(payload.get('format') or 'html'))
+                                                  str(payload.get('format') or 'html'), payload.get('report'))
                 self.send_json({'success': True, 'name': name})
             except ValueError as exc:
                 self.send_json({'success': False, 'message': str(exc)}, 400)

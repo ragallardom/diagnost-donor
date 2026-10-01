@@ -11,18 +11,17 @@ paired, one "Just Works" pairing (no code to type) is tried and the send retried
 import glob
 import os
 import re
-import shutil
 import socket
 import struct
 import subprocess
 import tempfile
 import time
 
+import pdf_report
+
 REPORT_DIR = os.path.join(tempfile.gettempdir(), 'diagnost_reports')
 MAC_RE = re.compile(r'^[0-9A-F]{2}(:[0-9A-F]{2}){5}$')
 _SAFE_NAME_RE = re.compile(r'^[A-Za-z0-9._-]{1,80}\.(html|pdf)$')
-CHROME_CANDIDATES = ('google-chrome', 'google-chrome-stable', '/opt/google/chrome/google-chrome',
-                     'chromium-browser', 'chromium')
 
 OBEX = 'org.bluez.obex'
 SEND_TIMEOUT_SEC = 60       # the phone shows an "accept file" prompt: give the technician time
@@ -40,108 +39,29 @@ def report_filename(serial, now=None, ext='html'):
     return f"informe_{serial}_{time.strftime('%Y%m%d-%H%M', time.localtime(now))}.{ext}"
 
 
-def find_chrome():
-    override = os.environ.get('DIAG_CHROME')
-    if override and os.path.exists(override):
-        return override
-    for cand in CHROME_CANDIDATES:
-        path = shutil.which(cand) or (cand if os.path.isabs(cand) and os.path.exists(cand) else None)
-        if path:
-            return path
-    return None
+def save_report(html, serial, fmt='html', report=None, max_bytes=200_000):
+    """Write the report to REPORT_DIR and return its file name.
 
-
-# Headless Chrome must not touch the network: the kiosk firewall DROPs packets, so proxy auto-detection,
-# component updates or sync would stall it for a long time.
-_CHROME_OFFLINE_FLAGS = (
-    '--headless', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage',
-    '--no-proxy-server', '--disable-background-networking', '--disable-component-update',
-    '--disable-sync', '--disable-extensions', '--disable-default-apps', '--disable-breakpad',
-    '--disable-client-side-phishing-detection', '--no-first-run', '--no-default-browser-check',
-    '--metrics-recording-only', '--mute-audio', '--no-pdf-header-footer',
-)
-
-
-def _pdf_is_complete(path):
-    try:
-        with open(path, 'rb') as f:
-            head = f.read(5)
-            f.seek(0, os.SEEK_END)
-            size = f.tell()
-            f.seek(max(0, size - 1024))
-            tail = f.read()
-        return head == b'%PDF-' and b'%%EOF' in tail, size
-    except OSError:
-        return False, 0
-
-
-def html_to_pdf(html_path, pdf_path, timeout=60):
-    """Print an HTML file to PDF with headless Chrome (separate profile: the kiosk Chrome is running).
-
-    Chrome can take long to exit (or hang on shutdown) even after the PDF is written, so the file
-    itself is what is waited for: once it is complete and stable the browser is killed.
+    html: the HTML document (format 'html'). report: the report model (format 'pdf'), rendered by
+    pdf_report: Chrome cannot print here (kiosk policy blocks printing and file://).
     """
-    chrome = find_chrome()
-    if not chrome:
-        raise RuntimeError('Chrome no disponible para crear el PDF')
-    profile = tempfile.mkdtemp(prefix='diag_pdf_')
-    log = tempfile.TemporaryFile()
-    proc = subprocess.Popen(
-        [chrome, *_CHROME_OFFLINE_FLAGS, f'--user-data-dir={profile}', f'--print-to-pdf={pdf_path}',
-         'file://' + html_path],
-        stdout=subprocess.DEVNULL, stderr=log, start_new_session=True)
-    try:
-        deadline = time.monotonic() + timeout
-        last_size = -1
-        while time.monotonic() < deadline:
-            complete, size = _pdf_is_complete(pdf_path)
-            if complete and size == last_size:
-                return                       # written and no longer growing
-            last_size = size if complete else -1
-            if proc.poll() is not None:      # Chrome exited: the file is final (or it failed)
-                if _pdf_is_complete(pdf_path)[0]:
-                    return
-                log.seek(0)
-                tail = log.read().decode('utf-8', 'replace').strip().splitlines()[-1:] or ['sin salida']
-                raise RuntimeError(f'No se pudo crear el PDF ({tail[0][:80]})')
-            time.sleep(0.3)
-        raise RuntimeError('Tiempo agotado creando el PDF')
-    finally:
-        try:
-            os.killpg(proc.pid, 9)           # the whole Chrome process tree
-        except (OSError, ProcessLookupError):
-            pass
-        try:
-            proc.wait(timeout=5)
-        except Exception:
-            pass
-        log.close()
-        shutil.rmtree(profile, ignore_errors=True)
-
-
-def save_report(html, serial, fmt='html', max_bytes=200_000):
-    if not isinstance(html, str) or not html.strip():
-        raise ValueError('Informe vacío')
-    data = html.encode('utf-8')
+    if fmt == 'pdf':
+        data = pdf_report.render_pdf(report)
+        ext = 'pdf'
+    elif fmt == 'html':
+        if not isinstance(html, str) or not html.strip():
+            raise ValueError('Informe vacío')
+        data = html.encode('utf-8')
+        ext = 'html'
+    else:
+        raise ValueError('Formato no válido')
     if len(data) > max_bytes:
         raise ValueError('Informe demasiado grande')
-    if fmt not in ('html', 'pdf'):
-        raise ValueError('Formato no válido')
     os.makedirs(REPORT_DIR, mode=0o700, exist_ok=True)
-    name = report_filename(serial)
-    html_path = os.path.join(REPORT_DIR, name)
-    with open(html_path, 'wb') as f:
+    name = report_filename(serial, ext=ext)
+    with open(os.path.join(REPORT_DIR, name), 'wb') as f:
         f.write(data)
-    if fmt == 'html':
-        return name
-    pdf_name = name[:-len('.html')] + '.pdf'
-    try:
-        html_to_pdf(html_path, os.path.join(REPORT_DIR, pdf_name))
-    except RuntimeError as exc:
-        raise ValueError(str(exc))
-    finally:
-        os.unlink(html_path)          # only the chosen format is kept
-    return pdf_name
+    return name
 
 
 def resolve_report(name):
